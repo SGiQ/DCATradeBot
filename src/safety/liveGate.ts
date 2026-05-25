@@ -17,17 +17,15 @@ const POLL_INTERVAL_MS = 5_000;
  * Gate every order in live mode.
  *
  * Steps (live only):
- *   1. Verify ALPACA_LIVE_KEY/SECRET are set (broker construction catches the
- *      hard case; here we double-check upstream config exists).
- *   2. Check today's submitted live spend vs DAILY_LIVE_CAP_USD. Skip if cap
- *      would be exceeded by this intent.
+ *   1. Verify ALPACA_LIVE_KEY/SECRET are set.
+ *   2. Check today's submitted live spend vs DAILY_LIVE_CAP_USD.
  *   3. Insert an `approvals` row (status=pending) with an expiry.
- *   4. POST to SLACK_WEBHOOK_URL with intent details + the approve URL
- *      (PUBLIC_APPROVE_BASE_URL/approve?id=<approvalId>) and a reject URL.
- *   5. Poll the approvals row until approved | rejected | expired |
- *      APPROVAL_TIMEOUT_MIN reached.
+ *   4. If NIA_WEBHOOK_URL is set, POST the intent so NIA can notify the user
+ *      (SMS/voice/chat); regardless, NIA can also poll via the dca_*
+ *      tools any time and decide via the dashboard / CLI / NIA chat.
+ *   5. Poll the approvals row until approved | rejected | expired.
  *
- * In paper mode this is a no-op pass-through.
+ * Paper mode is a no-op pass-through.
  */
 export async function gateLiveOrder(input: {
   runId: string;
@@ -43,7 +41,6 @@ export async function gateLiveOrder(input: {
     return { approved: false, status: 'rejected', reason: 'LIVE_TRADING=true but ALPACA_LIVE_KEY/SECRET unset' };
   }
 
-  // Daily live spend cap
   const cap = await checkDailyCap(input.intent, cfg.DAILY_LIVE_CAP_USD);
   if (!cap.ok) {
     return { approved: false, status: 'skipped', reason: cap.reason };
@@ -65,12 +62,23 @@ export async function gateLiveOrder(input: {
   }
   const approvalId = row.id;
 
-  // Fire Slack webhook (best-effort)
-  if (cfg.SLACK_WEBHOOK_URL) {
-    await postSlack(cfg.SLACK_WEBHOOK_URL, input.intent, approvalId, cfg.PUBLIC_APPROVE_BASE_URL);
+  // Optional push to NIA (fire-and-forget; failure here must not block trading)
+  if (cfg.NIA_WEBHOOK_URL) {
+    notifyNia(cfg.NIA_WEBHOOK_URL, {
+      type: 'dca.approval.pending',
+      approvalId,
+      runId: input.runId,
+      intent: input.intent,
+      expiresAt: expiresAt.toISOString(),
+      approveUrl: cfg.PUBLIC_APPROVE_BASE_URL
+        ? `${cfg.PUBLIC_APPROVE_BASE_URL.replace(/\/$/, '')}/approve?id=${approvalId}`
+        : null,
+      rejectUrl: cfg.PUBLIC_APPROVE_BASE_URL
+        ? `${cfg.PUBLIC_APPROVE_BASE_URL.replace(/\/$/, '')}/reject?id=${approvalId}`
+        : null,
+    }).catch((err) => console.error('[liveGate] NIA webhook failed:', err));
   }
 
-  // Poll
   const deadline = Date.now() + cfg.APPROVAL_TIMEOUT_MIN * 60_000;
   while (Date.now() < deadline) {
     await sleep(POLL_INTERVAL_MS);
@@ -84,7 +92,6 @@ export async function gateLiveOrder(input: {
     }
   }
 
-  // Timed out
   await db
     .update(approvals)
     .set({ status: 'expired', decidedAt: new Date() })
@@ -116,26 +123,16 @@ async function checkDailyCap(intent: Intent, capUsd: number): Promise<{ ok: true
   return { ok: true };
 }
 
-async function postSlack(webhook: string, intent: Intent, approvalId: string, approveBase?: string): Promise<void> {
-  const sizeStr = intent.notional !== undefined ? `$${intent.notional.toFixed(2)}` : `${intent.qty} units`;
-  const approveUrl = approveBase ? `${approveBase.replace(/\/$/, '')}/approve?id=${approvalId}` : '(set PUBLIC_APPROVE_BASE_URL)';
-  const rejectUrl = approveBase ? `${approveBase.replace(/\/$/, '')}/reject?id=${approvalId}` : '(set PUBLIC_APPROVE_BASE_URL)';
-  const body = {
-    text:
-      `:warning: *LIVE* order needs approval\n` +
-      `*${intent.side.toUpperCase()} ${intent.symbol}* ${sizeStr}\n` +
-      `reason: ${intent.reason}\n` +
-      `approve: ${approveUrl}\nreject: ${rejectUrl}\n` +
-      `or run: \`npm run approve ${approvalId}\``,
-  };
-  try {
-    await request(webhook, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-  } catch (err) {
-    console.error('[liveGate] slack post failed:', err);
+async function notifyNia(webhook: string, payload: Record<string, unknown>): Promise<void> {
+  const res = await request(webhook, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  // Drain body so the socket can be released
+  await res.body.text();
+  if (res.statusCode < 200 || res.statusCode >= 300) {
+    throw new Error(`NIA webhook ${webhook} -> ${res.statusCode}`);
   }
 }
 

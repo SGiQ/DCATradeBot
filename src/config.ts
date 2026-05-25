@@ -27,7 +27,7 @@ const schema = z.object({
     .transform((v) => v === 'true'),
   DAILY_LIVE_CAP_USD: z.coerce.number().positive().default(100),
   APPROVAL_TIMEOUT_MIN: z.coerce.number().positive().default(30),
-  SLACK_WEBHOOK_URL: z.string().url().optional(),
+  NIA_WEBHOOK_URL: z.string().url().optional(),
   PUBLIC_APPROVE_BASE_URL: z.string().url().optional(),
 
   UI_PORT: z.coerce.number().int().positive().default(8080),

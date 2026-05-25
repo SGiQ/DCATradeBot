@@ -50,9 +50,16 @@ any order reaches the broker (see `src/safety/liveGate.ts`):
    (paper keys are never used in live mode).
 2. **Daily cap**: today's submitted live buy notional + this intent must
    stay &le; `DAILY_LIVE_CAP_USD`, else the intent is `skipped`.
-3. **Slack approval**: the bot inserts an `approvals` row, posts to
-   `SLACK_WEBHOOK_URL` with approve/reject links, then polls until decision
-   or `APPROVAL_TIMEOUT_MIN` (default 30m). Decide via:
-   - Clicking the link served at `PUBLIC_APPROVE_BASE_URL/approve?id=...`
-     (you'll need to run a tiny endpoint for these &mdash; not included in v1)
-   - Or the CLI: `npm run approve &lt;approval-id&gt; [approve|reject]`
+3. **Approval**: the bot inserts an `approvals` row, optionally POSTs to
+   `NIA_WEBHOOK_URL` so [NIA](https://github.com/SGiQ/nia-assistant) can
+   notify you (SMS / voice / chat) and call back with the decision, then
+   polls the row until decision or `APPROVAL_TIMEOUT_MIN` (default 30m).
+
+Decision can come from any of:
+- **NIA**: ask in chat or voice ("anything pending on the bot?" &rarr;
+  "approve the BTC buy"). NIA hits the same `/api/approvals` endpoint
+  the dashboard uses, with `DCA_UI_USER`/`DCA_UI_PASS`.
+- **Dashboard**: Approve / Reject buttons at `/`.
+- **Slack-style click URL**: `PUBLIC_APPROVE_BASE_URL/approve?id=&lt;uuid&gt;`
+  (works in any chat client that auto-opens links).
+- **CLI**: `npm run approve &lt;approval-id&gt; [approve|reject]`.
