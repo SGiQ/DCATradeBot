@@ -21,13 +21,15 @@ describe('rsi14', () => {
     expect(rsi14(falling)).toBeLessThan(50);
   });
   it('matches the canonical Wilder example within tolerance', () => {
-    // Closes from Wilder's original RSI example; ~70.53 is the documented value
+    // First 15 closes from Wilder's "New Concepts" RSI example: 14 changes,
+    // no smoothing iterations -> documented value is ~70.53.
     const closes = [
       44.34, 44.09, 44.15, 43.61, 44.33, 44.83, 45.10, 45.42, 45.84, 46.08,
-      45.89, 46.03, 45.61, 46.28, 46.28, 46.0, 46.03, 46.41, 46.22, 45.64,
+      45.89, 46.03, 45.61, 46.28, 46.28,
     ];
-    expect(rsi14(closes)).toBeGreaterThan(65);
-    expect(rsi14(closes)).toBeLessThan(75);
+    const r = rsi14(closes);
+    expect(r).toBeGreaterThan(70);
+    expect(r).toBeLessThan(71);
   });
 });
 

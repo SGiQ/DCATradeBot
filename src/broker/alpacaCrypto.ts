@@ -74,7 +74,15 @@ export class AlpacaCryptoClient {
     };
   }
 
-  private async req<T>(base: string, path: string, init: { method?: string; body?: unknown; query?: Record<string, string | number | undefined> } = {}): Promise<T> {
+  private async req<T>(
+    base: string,
+    path: string,
+    init: {
+      method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
+      body?: unknown;
+      query?: Record<string, string | number | undefined>;
+    } = {},
+  ): Promise<T> {
     const url = new URL(path, base);
     if (init.query) {
       for (const [k, v] of Object.entries(init.query)) {
