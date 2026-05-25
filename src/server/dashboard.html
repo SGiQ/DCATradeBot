@@ -4,75 +4,662 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>DCATradeBot</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
   :root {
-    --bg: #0b0f14; --fg: #e5e7eb; --muted: #9ca3af; --card: #111827;
-    --line: #1f2937; --accent: #22d3ee; --good: #34d399; --bad: #f87171; --warn: #fbbf24;
+    /* Surfaces */
+    --bg:           #0F172A;
+    --surface:      #151E33;
+    --surface-2:    #1A2236;
+    --border:       #2A3548;
+    --border-soft:  #1F2A40;
+    /* Text */
+    --fg:           #F8FAFC;
+    --fg-2:         #CBD5E1;
+    --fg-3:         #94A3B8;
+    --fg-4:         #64748B;
+    /* Brand / data */
+    --btc:          #F59E0B;
+    --eth:          #8B5CF6;
+    --up:           #34D399;
+    --down:         #F87171;
+    --neutral:      #94A3B8;
+    /* Tints */
+    --up-tint:      rgba(52,211,153,0.12);
+    --down-tint:    rgba(248,113,113,0.12);
+    --neutral-tint: rgba(148,163,184,0.10);
+    --btc-tint:     rgba(245,158,11,0.18);
+    --eth-tint:     rgba(139,92,246,0.18);
+    /* Radii */
+    --r-sm: 4px;
+    --r:    6px;
+    --r-lg: 10px;
   }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.4 system-ui, -apple-system, sans-serif; }
-  header { padding: 1rem 1.5rem; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; }
-  h1 { margin: 0; font-size: 1.1rem; letter-spacing: .04em; }
-  .status { color: var(--muted); font-size: .85rem; }
-  main { padding: 1rem 1.5rem; display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); }
-  .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 1rem; }
-  .card h2 { margin: 0 0 .75rem; font-size: .85rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
-  table { width: 100%; border-collapse: collapse; font-size: .85rem; }
-  th, td { text-align: left; padding: .35rem .5rem; border-bottom: 1px solid var(--line); }
-  th { color: var(--muted); font-weight: 500; }
-  td.num { text-align: right; font-variant-numeric: tabular-nums; }
-  .pill { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: .75rem; }
-  .pill.uptrend { background: rgba(52,211,153,.15); color: var(--good); }
-  .pill.neutral { background: rgba(156,163,175,.15); color: var(--muted); }
-  .pill.downtrend { background: rgba(248,113,113,.15); color: var(--bad); }
-  .pill.buy { background: rgba(34,211,238,.15); color: var(--accent); }
-  .pill.sell { background: rgba(251,191,36,.15); color: var(--warn); }
-  .pill.filled { background: rgba(52,211,153,.15); color: var(--good); }
-  .pill.error, .pill.rejected, .pill.expired { background: rgba(248,113,113,.15); color: var(--bad); }
-  button { background: var(--accent); color: #0b0f14; border: 0; padding: .25rem .6rem; border-radius: 4px; cursor: pointer; font-weight: 600; }
-  button.reject { background: var(--bad); color: white; margin-left: .25rem; }
-  .empty { color: var(--muted); font-style: italic; padding: .5rem; }
-  pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); padding: .5rem; border-radius: 4px; font-size: .75rem; max-height: 10rem; overflow: auto; }
-  code { font-size: .75rem; color: var(--muted); }
+  html, body { background: var(--bg); }
+  body {
+    margin: 0;
+    color: var(--fg);
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    font-size: 14px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+    font-feature-settings: 'cv11', 'ss01';
+  }
+  .mono, .num, td.num, .stat-value, .pill code { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace; font-variant-numeric: tabular-nums; }
+
+  /* Header */
+  header {
+    padding: 14px 24px;
+    border-bottom: 1px solid var(--border-soft);
+    display: flex; justify-content: space-between; align-items: center;
+    background: linear-gradient(180deg, var(--surface) 0%, var(--bg) 100%);
+  }
+  .brand { display: flex; align-items: baseline; gap: 10px; }
+  .brand h1 {
+    margin: 0; font-size: 14px; font-weight: 600;
+    letter-spacing: 0.08em; text-transform: uppercase;
+  }
+  .brand .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--up); box-shadow: 0 0 8px var(--up); animation: pulse 2.5s ease-in-out infinite; }
+  .brand .tag { color: var(--fg-4); font-size: 12px; }
+  .status { color: var(--fg-3); font-size: 12px; font-family: 'JetBrains Mono', monospace; }
+
+  /* Layout */
+  main { padding: 20px 24px 60px; max-width: 1600px; margin: 0 auto; }
+  .grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 16px; }
+  .col-3  { grid-column: span 3; }
+  .col-4  { grid-column: span 4; }
+  .col-5  { grid-column: span 5; }
+  .col-6  { grid-column: span 6; }
+  .col-7  { grid-column: span 7; }
+  .col-8  { grid-column: span 8; }
+  .col-12 { grid-column: span 12; }
+  @media (max-width: 1024px) { .col-3,.col-4,.col-5,.col-7,.col-8 { grid-column: span 6; } }
+  @media (max-width: 640px)  { .col-3,.col-4,.col-5,.col-6,.col-7,.col-8 { grid-column: span 12; } }
+
+  /* Card */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border-soft);
+    border-radius: var(--r-lg);
+    padding: 16px;
+    transition: border-color 150ms ease;
+  }
+  .card.compact { padding: 14px 16px; }
+  .card-head {
+    display: flex; align-items: center; justify-content: space-between;
+    margin: 0 0 12px; gap: 8px;
+  }
+  .card h2 {
+    margin: 0;
+    font-size: 11px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.1em;
+    color: var(--fg-3);
+  }
+  .card .sub { color: var(--fg-4); font-size: 11px; }
+
+  /* KPI tiles */
+  .kpi .stat-label { color: var(--fg-3); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; }
+  .kpi .stat-value { font-size: 24px; font-weight: 600; margin-top: 4px; letter-spacing: -0.01em; }
+  .kpi .stat-delta { font-size: 12px; margin-top: 2px; color: var(--fg-4); }
+  .kpi .stat-delta.up   { color: var(--up); }
+  .kpi .stat-delta.down { color: var(--down); }
+
+  /* Chart wrappers */
+  .chart-wrap { position: relative; width: 100%; }
+  .chart-wrap.h-200 { height: 200px; }
+  .chart-wrap.h-260 { height: 260px; }
+  .chart-wrap.h-72  { height: 72px; }
+
+  /* Pill */
+  .pill {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 8px; border-radius: 999px; font-size: 11px;
+    font-weight: 500; letter-spacing: 0.02em;
+    border: 1px solid transparent;
+  }
+  .pill.uptrend   { background: var(--up-tint);   color: var(--up);      border-color: rgba(52,211,153,0.25); }
+  .pill.neutral   { background: var(--neutral-tint); color: var(--fg-2); border-color: rgba(148,163,184,0.22); }
+  .pill.downtrend { background: var(--down-tint); color: var(--down);    border-color: rgba(248,113,113,0.25); }
+  .pill.buy       { background: rgba(52,211,153,0.10);  color: var(--up); border-color: rgba(52,211,153,0.22); }
+  .pill.sell      { background: rgba(245,158,11,0.12);  color: var(--btc); border-color: rgba(245,158,11,0.30); }
+  .pill.filled    { background: var(--up-tint);   color: var(--up);      border-color: rgba(52,211,153,0.25); }
+  .pill.accepted, .pill.new, .pill.pending_new { background: var(--neutral-tint); color: var(--fg-2); }
+  .pill.error, .pill.rejected, .pill.expired   { background: var(--down-tint);    color: var(--down); border-color: rgba(248,113,113,0.25); }
+  .pill.skipped, .pill.pending_approval        { background: rgba(245,158,11,0.10); color: var(--btc); border-color: rgba(245,158,11,0.22); }
+  .pill.live  { background: var(--down-tint); color: var(--down); border-color: rgba(248,113,113,0.25); }
+  .pill.paper { background: var(--neutral-tint); color: var(--fg-2); }
+  .symbol-tag { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; }
+  .symbol-tag .dot { width: 8px; height: 8px; border-radius: 50%; }
+  .symbol-tag.btc .dot { background: var(--btc); }
+  .symbol-tag.eth .dot { background: var(--eth); }
+
+  /* Tables */
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td {
+    text-align: left;
+    padding: 9px 8px;
+    border-bottom: 1px solid var(--border-soft);
+  }
+  th {
+    color: var(--fg-4); font-weight: 500;
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
+    padding-bottom: 6px;
+  }
+  tbody tr:last-child td { border-bottom: 0; }
+  td.num { text-align: right; }
+  .table-wrap { max-height: 360px; overflow: auto; }
+  .table-wrap::-webkit-scrollbar { width: 8px; height: 8px; }
+  .table-wrap::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+  /* Buttons */
+  button {
+    background: var(--up); color: #0a0f1a; border: 0;
+    padding: 7px 14px; border-radius: var(--r); cursor: pointer;
+    font-weight: 600; font-size: 12px; letter-spacing: 0.02em;
+    transition: filter 150ms ease, transform 80ms ease;
+  }
+  button:hover { filter: brightness(1.08); }
+  button:active { transform: translateY(1px); }
+  button.reject { background: var(--down); color: #1a0a0a; margin-left: 6px; }
+  button:focus-visible { outline: 2px solid var(--btc); outline-offset: 2px; }
+
+  /* Approvals */
+  .approval-row {
+    padding: 12px 0;
+    border-bottom: 1px dashed var(--border-soft);
+  }
+  .approval-row:last-child { border-bottom: 0; }
+  .approval-row .meta {
+    color: var(--fg-4); font-size: 11px; margin-top: 4px;
+    display: flex; gap: 10px; flex-wrap: wrap;
+  }
+  .approval-row code { font-size: 11px; color: var(--fg-4); }
+
+  /* Empty states */
+  .empty {
+    color: var(--fg-4); font-style: italic; font-size: 13px;
+    padding: 28px 12px; text-align: center;
+  }
+
+  /* Trend tiles */
+  .trend-tile {
+    display: flex; flex-direction: column; gap: 6px;
+    padding: 10px 12px;
+    background: var(--surface-2);
+    border-radius: var(--r);
+  }
+  .trend-tile .head { display: flex; justify-content: space-between; align-items: center; }
+  .trend-tile .rsi-row { display: flex; justify-content: space-between; align-items: center; }
+  .trend-tile .rsi-num { font-size: 16px; font-weight: 600; }
+  .trend-tile-wrap { display: grid; grid-template-columns: 1fr; gap: 10px; }
+
+  /* Reduced motion */
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.4; }
+  }
 </style>
 </head>
 <body>
+
 <header>
-  <h1>DCATradeBot</h1>
-  <div class="status" id="status">loading...</div>
+  <div class="brand">
+    <span class="dot" id="live-dot" aria-hidden="true"></span>
+    <h1>DCATradeBot</h1>
+    <span class="tag">crypto · daily</span>
+  </div>
+  <div class="status" id="status">loading…</div>
 </header>
+
 <main>
-  <section class="card" id="approvals-card">
-    <h2>Pending live approvals</h2>
-    <div id="approvals"></div>
+  <!-- KPI ROW -->
+  <section class="grid" style="margin-bottom: 16px;">
+    <div class="card kpi col-3" id="kpi-positions">
+      <div class="stat-label">Portfolio (cost basis)</div>
+      <div class="stat-value">—</div>
+      <div class="stat-delta">across <span data-bind="pos-count">0</span> position(s)</div>
+    </div>
+    <div class="card kpi col-3" id="kpi-today">
+      <div class="stat-label">Today's spend</div>
+      <div class="stat-value">—</div>
+      <div class="stat-delta">cap <span data-bind="cap">—</span></div>
+    </div>
+    <div class="card kpi col-3" id="kpi-total">
+      <div class="stat-label">Total DCA in</div>
+      <div class="stat-value">—</div>
+      <div class="stat-delta"><span data-bind="order-count">0</span> orders all-time</div>
+    </div>
+    <div class="card kpi col-3" id="kpi-mode">
+      <div class="stat-label">Last run</div>
+      <div class="stat-value" style="font-size: 14px; margin-top: 8px;">—</div>
+      <div class="stat-delta"><span data-bind="last-mode">paper</span></div>
+    </div>
   </section>
-  <section class="card">
-    <h2>Positions (local)</h2>
-    <table><thead><tr><th>Symbol</th><th class="num">Qty</th><th class="num">Avg cost</th><th>Updated</th></tr></thead><tbody id="positions"></tbody></table>
+
+  <!-- APPROVALS (only renders when non-empty) -->
+  <section class="grid" id="approvals-section" style="margin-bottom: 16px; display: none;">
+    <div class="card col-12" id="approvals-card">
+      <div class="card-head">
+        <h2>Pending live approvals</h2>
+        <span class="sub" id="approvals-count">0</span>
+      </div>
+      <div id="approvals"></div>
+    </div>
   </section>
-  <section class="card">
-    <h2>Recent runs</h2>
-    <div id="runs"></div>
+
+  <!-- CHARTS ROW 1 -->
+  <section class="grid" style="margin-bottom: 16px;">
+    <div class="card col-7">
+      <div class="card-head">
+        <h2>Cumulative DCA spend</h2>
+        <span class="sub">stacked by symbol</span>
+      </div>
+      <div class="chart-wrap h-260"><canvas id="chart-cumulative"></canvas></div>
+    </div>
+    <div class="card col-5">
+      <div class="card-head">
+        <h2>Trend regime &amp; RSI</h2>
+        <span class="sub">per symbol</span>
+      </div>
+      <div class="trend-tile-wrap" id="trend-tiles"></div>
+    </div>
   </section>
-  <section class="card" style="grid-column: 1 / -1;">
-    <h2>Recent orders</h2>
-    <table>
-      <thead><tr><th>When</th><th>Symbol</th><th>Side</th><th class="num">Notional</th><th class="num">Qty</th><th class="num">Filled @</th><th>Status</th><th>Reason</th></tr></thead>
-      <tbody id="orders"></tbody>
-    </table>
+
+  <!-- CHARTS ROW 2 -->
+  <section class="grid" style="margin-bottom: 16px;">
+    <div class="card col-7">
+      <div class="card-head">
+        <h2>Daily spend vs cap</h2>
+        <span class="sub">last 30 days</span>
+      </div>
+      <div class="chart-wrap h-260"><canvas id="chart-daily"></canvas></div>
+    </div>
+    <div class="card col-5">
+      <div class="card-head">
+        <h2>Positions</h2>
+        <span class="sub" id="pos-sub">0</span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Symbol</th><th class="num">Qty</th><th class="num">Avg cost</th></tr></thead>
+          <tbody id="positions"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- RUNS + ORDERS -->
+  <section class="grid">
+    <div class="card col-5">
+      <div class="card-head">
+        <h2>Recent runs</h2>
+        <span class="sub">last 5</span>
+      </div>
+      <div id="runs"></div>
+    </div>
+    <div class="card col-7">
+      <div class="card-head">
+        <h2>Recent orders</h2>
+        <span class="sub" id="ord-sub">0</span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>When</th><th>Symbol</th><th>Side</th>
+              <th class="num">Notional</th><th class="num">Qty</th>
+              <th class="num">Filled @</th><th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="orders"></tbody>
+        </table>
+      </div>
+    </div>
   </section>
 </main>
+
 <script>
-const fmtTime = (iso) => new Date(iso).toLocaleString();
-const num = (v, dp = 2) => v == null || v === '' ? '' : Number(v).toFixed(dp);
+// ─── Chart.js defaults (dark theme) ────────────────────────────────────
+Chart.defaults.color = '#94A3B8';
+Chart.defaults.font.family = "'Inter', system-ui, sans-serif";
+Chart.defaults.font.size = 11;
+Chart.defaults.borderColor = '#1F2A40';
+Chart.defaults.scale.grid.color = '#1F2A40';
+Chart.defaults.scale.border = { color: '#2A3548' };
+
+const SYMBOLS = ['BTC/USD', 'ETH/USD'];
+const COLORS  = { 'BTC/USD': '#F59E0B', 'ETH/USD': '#8B5CF6' };
+const FILLS   = { 'BTC/USD': 'rgba(245,158,11,0.18)', 'ETH/USD': 'rgba(139,92,246,0.18)' };
+
+// ─── helpers ───────────────────────────────────────────────────────────
+const fmtUsd = (n) => '$' + (Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmtNum = (n, dp = 2) => n == null || n === '' ? '' : Number(n).toFixed(dp);
+const fmtDate = (iso) => new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+const fmtDay = (d) => d.toLocaleDateString('en-CA'); // YYYY-MM-DD
 const pill = (cls, txt) => `<span class="pill ${cls}">${txt}</span>`;
+const symTag = (sym) => {
+  const k = sym.startsWith('BTC') ? 'btc' : sym.startsWith('ETH') ? 'eth' : '';
+  return `<span class="symbol-tag ${k}"><span class="dot"></span>${sym}</span>`;
+};
 
 async function fetchJson(url) {
-  const r = await fetch(url);
-  if (!r.ok) throw new Error(url + ' -> ' + r.status);
+  const r = await fetch(url, { credentials: 'same-origin' });
+  if (!r.ok) throw new Error(url + ' → ' + r.status);
   return r.json();
 }
 
+// ─── Chart instances (kept so we can .update() instead of re-create) ────
+const charts = {};
+
+function ensureChart(id, factory) {
+  if (charts[id]) return charts[id];
+  const el = document.getElementById(id);
+  if (!el) return null;
+  charts[id] = factory(el.getContext('2d'));
+  return charts[id];
+}
+
+// ─── KPI computation ────────────────────────────────────────────────────
+function todayUtc() {
+  const d = new Date();
+  d.setUTCHours(0, 0, 0, 0);
+  return d;
+}
+
+function computeKpis(orders, positions, runs) {
+  const today = todayUtc().getTime();
+  const todaysBuys = orders.filter(o => new Date(o.createdAt).getTime() >= today && o.side === 'buy' && o.notional);
+  const todaySpend = todaysBuys.reduce((a, o) => a + Number(o.notional), 0);
+
+  const totalDcaIn = orders.filter(o => o.side === 'buy' && o.notional).reduce((a, o) => a + Number(o.notional), 0);
+  const buyCount = orders.filter(o => o.side === 'buy').length;
+
+  const portfolio = positions.reduce((a, p) => a + Number(p.qty) * Number(p.avgCost), 0);
+
+  const lastRun = runs[0];
+  return {
+    portfolio, posCount: positions.length,
+    todaySpend, totalDcaIn, orderCount: buyCount,
+    lastRunAt: lastRun ? lastRun.ranAt : null,
+    lastMode: lastRun ? lastRun.mode : '—',
+  };
+}
+
+function renderKpis(k, cfg) {
+  document.querySelector('#kpi-positions .stat-value').textContent = fmtUsd(k.portfolio);
+  document.querySelector('#kpi-positions [data-bind="pos-count"]').textContent = k.posCount;
+
+  document.querySelector('#kpi-today .stat-value').textContent = fmtUsd(k.todaySpend);
+  document.querySelector('#kpi-today [data-bind="cap"]').textContent = cfg.cap ? fmtUsd(cfg.cap) : '—';
+
+  document.querySelector('#kpi-total .stat-value').textContent = fmtUsd(k.totalDcaIn);
+  document.querySelector('#kpi-total [data-bind="order-count"]').textContent = k.orderCount;
+
+  const lastRunCell = document.querySelector('#kpi-mode .stat-value');
+  lastRunCell.textContent = k.lastRunAt ? fmtDate(k.lastRunAt) : 'no runs yet';
+  document.querySelector('#kpi-mode [data-bind="last-mode"]').innerHTML = pill(k.lastMode, k.lastMode);
+}
+
+// ─── Data transforms ────────────────────────────────────────────────────
+function lastNDays(n) {
+  const out = [];
+  const today = todayUtc();
+  for (let i = n - 1; i >= 0; i--) {
+    const d = new Date(today);
+    d.setUTCDate(today.getUTCDate() - i);
+    out.push(fmtDay(d));
+  }
+  return out;
+}
+
+function bucketOrdersByDay(orders, days, symbol) {
+  const map = Object.fromEntries(days.map(d => [d, 0]));
+  for (const o of orders) {
+    if (symbol && o.symbol !== symbol) continue;
+    if (o.side !== 'buy' || !o.notional) continue;
+    const key = fmtDay(new Date(o.createdAt));
+    if (key in map) map[key] += Number(o.notional);
+  }
+  return days.map(d => map[d]);
+}
+
+function cumulative(arr) {
+  let s = 0;
+  return arr.map(v => (s += v));
+}
+
+function regimeHistory(runs, symbol) {
+  // returns sorted oldest-first array of { date, regime, rsi }
+  return runs.slice().reverse()
+    .map(r => {
+      const t = r.summary?.trends?.[symbol];
+      return t ? { date: r.ranAt, regime: t.regime, rsi: t.rsi } : null;
+    })
+    .filter(Boolean);
+}
+
+// ─── Charts ─────────────────────────────────────────────────────────────
+function renderCumulativeChart(orders) {
+  const days = lastNDays(30);
+  const btcDaily = bucketOrdersByDay(orders, days, 'BTC/USD');
+  const ethDaily = bucketOrdersByDay(orders, days, 'ETH/USD');
+  const btcCum = cumulative(btcDaily);
+  const ethCum = cumulative(ethDaily);
+
+  const c = ensureChart('chart-cumulative', (ctx) => new Chart(ctx, {
+    type: 'line',
+    data: { labels: days, datasets: [
+      { label: 'BTC/USD', data: btcCum, borderColor: COLORS['BTC/USD'], backgroundColor: FILLS['BTC/USD'], fill: true, tension: 0.3, pointRadius: 0, borderWidth: 2 },
+      { label: 'ETH/USD', data: ethCum, borderColor: COLORS['ETH/USD'], backgroundColor: FILLS['ETH/USD'], fill: true, tension: 0.3, pointRadius: 0, borderWidth: 2 },
+    ]},
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: true, position: 'top', align: 'end', labels: { boxWidth: 8, boxHeight: 8, usePointStyle: true, pointStyle: 'circle' } },
+        tooltip: {
+          backgroundColor: '#0F172A', borderColor: '#2A3548', borderWidth: 1,
+          padding: 10, titleColor: '#F8FAFC', bodyColor: '#CBD5E1',
+          callbacks: { label: (ctx) => `${ctx.dataset.label}: ${fmtUsd(ctx.parsed.y)}` },
+        },
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { maxRotation: 0, autoSkipPadding: 16 } },
+        y: { ticks: { callback: (v) => '$' + v } },
+      },
+    },
+  }));
+  c.data.labels = days;
+  c.data.datasets[0].data = btcCum;
+  c.data.datasets[1].data = ethCum;
+  c.update('none');
+}
+
+function renderDailyChart(orders, cap) {
+  const days = lastNDays(30);
+  const btc = bucketOrdersByDay(orders, days, 'BTC/USD');
+  const eth = bucketOrdersByDay(orders, days, 'ETH/USD');
+  const capLine = days.map(() => cap || 0);
+
+  const c = ensureChart('chart-daily', (ctx) => new Chart(ctx, {
+    type: 'bar',
+    data: { labels: days, datasets: [
+      { type: 'bar', label: 'BTC', data: btc, backgroundColor: COLORS['BTC/USD'], borderRadius: 3, stack: 's', borderSkipped: false },
+      { type: 'bar', label: 'ETH', data: eth, backgroundColor: COLORS['ETH/USD'], borderRadius: 3, stack: 's', borderSkipped: false },
+      { type: 'line', label: 'Daily cap', data: capLine, borderColor: '#F87171', borderDash: [4, 4], borderWidth: 1.5, pointRadius: 0, fill: false },
+    ]},
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: true, position: 'top', align: 'end', labels: { boxWidth: 8, boxHeight: 8, usePointStyle: true } },
+        tooltip: {
+          backgroundColor: '#0F172A', borderColor: '#2A3548', borderWidth: 1,
+          padding: 10, titleColor: '#F8FAFC', bodyColor: '#CBD5E1',
+          callbacks: { label: (ctx) => `${ctx.dataset.label}: ${fmtUsd(ctx.parsed.y)}` },
+        },
+      },
+      scales: {
+        x: { stacked: true, grid: { display: false }, ticks: { maxRotation: 0, autoSkipPadding: 14 } },
+        y: { stacked: true, ticks: { callback: (v) => '$' + v } },
+      },
+    },
+  }));
+  c.data.labels = days;
+  c.data.datasets[0].data = btc;
+  c.data.datasets[1].data = eth;
+  c.data.datasets[2].data = capLine;
+  c.update('none');
+}
+
+function renderTrendTiles(runs) {
+  const container = document.getElementById('trend-tiles');
+  const tiles = SYMBOLS.map((sym) => {
+    const hist = regimeHistory(runs, sym);
+    const latest = hist[hist.length - 1];
+    const regime = latest?.regime ?? 'neutral';
+    const rsi = latest?.rsi != null ? Number(latest.rsi).toFixed(1) : '—';
+    const sparkId = `spark-${sym.replace('/', '')}`;
+    return `
+      <div class="trend-tile" data-sym="${sym}">
+        <div class="head">${symTag(sym)} ${pill(regime, regime)}</div>
+        <div class="rsi-row">
+          <span class="sub" style="color: var(--fg-4); font-size: 11px;">RSI-14</span>
+          <span class="rsi-num mono">${rsi}</span>
+        </div>
+        <div class="chart-wrap h-72"><canvas id="${sparkId}"></canvas></div>
+      </div>
+    `;
+  }).join('');
+  container.innerHTML = tiles;
+
+  // Build / update sparklines after innerHTML write
+  for (const sym of SYMBOLS) {
+    const sparkId = `spark-${sym.replace('/', '')}`;
+    const hist = regimeHistory(runs, sym).slice(-30);
+    const labels = hist.map(h => fmtDate(h.date));
+    const data = hist.map(h => h.rsi);
+    const regimes = hist.map(h => h.regime);
+    // background bands by regime: emerald/slate/rose
+    const bandColors = regimes.map(r => r === 'uptrend' ? 'rgba(52,211,153,0.10)' : r === 'downtrend' ? 'rgba(248,113,113,0.10)' : 'rgba(148,163,184,0.06)');
+
+    delete charts[sparkId]; // tiles recreated each render
+    ensureChart(sparkId, (ctx) => new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [
+          { data, borderColor: COLORS[sym], borderWidth: 1.5, fill: false, pointRadius: 0, tension: 0.3 },
+          { type: 'bar', data: regimes.map(() => 100), backgroundColor: bandColors, barPercentage: 1.0, categoryPercentage: 1.0, order: 99 },
+        ],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        animation: false,
+        plugins: { legend: { display: false }, tooltip: { enabled: false } },
+        scales: {
+          x: { display: false, grid: { display: false } },
+          y: { display: false, min: 0, max: 100, grid: { display: false } },
+        },
+      },
+    }));
+  }
+}
+
+// ─── DOM renderers ──────────────────────────────────────────────────────
+function renderApprovals(list) {
+  const section = document.getElementById('approvals-section');
+  if (!list.length) { section.style.display = 'none'; return; }
+  section.style.display = 'grid';
+  document.getElementById('approvals-count').textContent = `${list.length} waiting`;
+  document.getElementById('approvals').innerHTML = list.map(a => {
+    const it = a.intent || {};
+    const size = it.notional != null ? fmtUsd(it.notional) : `${it.qty} units`;
+    const expiresMs = new Date(a.expiresAt) - new Date();
+    const expiresIn = expiresMs > 0 ? `${Math.round(expiresMs / 60000)}m` : 'expired';
+    return `
+      <div class="approval-row">
+        <div>${pill(it.side, (it.side||'').toUpperCase())} <strong>${it.symbol}</strong> <span class="mono">${size}</span></div>
+        <div class="meta">
+          <span>${it.reason || ''}</span>
+        </div>
+        <div class="meta">
+          <span>expires in ${expiresIn}</span>
+          <code>${a.id}</code>
+        </div>
+        <div style="margin-top: 8px;">
+          <button onclick="decide('${a.id}','approve')">Approve</button>
+          <button class="reject" onclick="decide('${a.id}','reject')">Reject</button>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+async function decide(id, decision) {
+  const r = await fetch('/api/approvals/' + id, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ decision }),
+  });
+  if (!r.ok) alert(`failed: ${r.status}`);
+  await refresh();
+}
+
+function renderPositions(list) {
+  document.getElementById('pos-sub').textContent = list.length;
+  const el = document.getElementById('positions');
+  if (!list.length) { el.innerHTML = '<tr><td colspan="3" class="empty">no positions yet</td></tr>'; return; }
+  el.innerHTML = list.map(p => `
+    <tr>
+      <td>${symTag(p.symbol)}</td>
+      <td class="num">${fmtNum(p.qty, 8)}</td>
+      <td class="num">${fmtUsd(p.avgCost)}</td>
+    </tr>`).join('');
+}
+
+function renderRuns(list) {
+  const el = document.getElementById('runs');
+  if (!list.length) { el.innerHTML = '<div class="empty">no runs yet — try <code>npm run run:once</code></div>'; return; }
+  el.innerHTML = list.slice(0, 5).map(r => {
+    const trends = r.summary?.trends || {};
+    const intents = r.summary?.intents || [];
+    const trendChips = Object.entries(trends).map(([sym, t]) =>
+      `<span class="symbol-tag" style="font-weight:500">${sym.replace('/USD','')} ${pill(t.regime, t.regime)}</span>`
+    ).join(' ');
+    return `
+      <div style="padding: 10px 0; border-bottom: 1px dashed var(--border-soft);">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <span class="mono" style="color: var(--fg-2); font-size: 12px;">${fmtDate(r.ranAt)}</span>
+          <span>${pill(r.mode, r.mode)} <span class="sub" style="color: var(--fg-4); margin-left:6px;">${intents.length} intent(s)</span></span>
+        </div>
+        <div style="margin-top: 6px; display: flex; gap: 8px; flex-wrap: wrap;">${trendChips}</div>
+      </div>`;
+  }).join('');
+}
+
+function renderOrders(list) {
+  document.getElementById('ord-sub').textContent = list.length;
+  const el = document.getElementById('orders');
+  if (!list.length) { el.innerHTML = '<tr><td colspan="7" class="empty">no orders yet</td></tr>'; return; }
+  el.innerHTML = list.slice(0, 50).map(o => `
+    <tr>
+      <td class="mono" style="color: var(--fg-3); font-size: 11px;">${fmtDate(o.createdAt)}</td>
+      <td>${symTag(o.symbol)}</td>
+      <td>${pill(o.side, o.side)}</td>
+      <td class="num">${o.notional ? fmtUsd(o.notional) : ''}</td>
+      <td class="num">${fmtNum(o.qty, 8)}</td>
+      <td class="num">${o.filledAvgPrice ? fmtUsd(o.filledAvgPrice) : ''}</td>
+      <td>${pill(o.status, o.status)}</td>
+    </tr>`).join('');
+}
+
+// ─── Refresh loop ───────────────────────────────────────────────────────
 async function refresh() {
   try {
     const [runs, ords, pos, apv] = await Promise.all([
@@ -81,82 +668,26 @@ async function refresh() {
       fetchJson('/api/positions'),
       fetchJson('/api/approvals'),
     ]);
+
+    // We don't expose strategy cfg via API; show DAILY_CAP_USD if .env default
+    const cfg = { cap: 100 };
+
+    const kpis = computeKpis(ords, pos, runs);
+    renderKpis(kpis, cfg);
     renderApprovals(apv);
     renderPositions(pos);
     renderRuns(runs);
     renderOrders(ords);
+    renderCumulativeChart(ords);
+    renderDailyChart(ords, cfg.cap);
+    renderTrendTiles(runs);
+
     document.getElementById('status').textContent = 'updated ' + new Date().toLocaleTimeString();
+    document.getElementById('live-dot').style.background = 'var(--up)';
   } catch (e) {
     document.getElementById('status').textContent = 'error: ' + e.message;
+    document.getElementById('live-dot').style.background = 'var(--down)';
   }
-}
-
-function renderApprovals(list) {
-  const el = document.getElementById('approvals');
-  if (!list.length) { el.innerHTML = '<div class="empty">none</div>'; return; }
-  el.innerHTML = list.map(a => {
-    const it = a.intent || {};
-    const size = it.notional != null ? '$' + Number(it.notional).toFixed(2) : (it.qty + ' units');
-    return `<div style="border-bottom:1px solid var(--line);padding:.5rem 0">
-      <div>${pill(it.side, (it.side||'').toUpperCase())} <b>${it.symbol}</b> ${size}</div>
-      <div style="color:var(--muted);font-size:.8rem;margin:.25rem 0">${it.reason || ''}</div>
-      <div style="color:var(--muted);font-size:.75rem">expires ${fmtTime(a.expiresAt)} · <code>${a.id}</code></div>
-      <div style="margin-top:.4rem">
-        <button onclick="decide('${a.id}','approve')">Approve</button>
-        <button class="reject" onclick="decide('${a.id}','reject')">Reject</button>
-      </div>
-    </div>`;
-  }).join('');
-}
-
-async function decide(id, decision) {
-  const r = await fetch('/api/approvals/' + id, {
-    method: 'POST', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ decision })
-  });
-  if (!r.ok) alert('failed: ' + r.status);
-  await refresh();
-}
-
-function renderPositions(list) {
-  const el = document.getElementById('positions');
-  if (!list.length) { el.innerHTML = '<tr><td colspan="4" class="empty">none yet</td></tr>'; return; }
-  el.innerHTML = list.map(p =>
-    `<tr><td>${p.symbol}</td><td class="num">${num(p.qty, 8)}</td><td class="num">${num(p.avgCost)}</td><td>${fmtTime(p.updatedAt)}</td></tr>`
-  ).join('');
-}
-
-function renderRuns(list) {
-  const el = document.getElementById('runs');
-  if (!list.length) { el.innerHTML = '<div class="empty">no runs yet</div>'; return; }
-  el.innerHTML = list.slice(0, 5).map(r => {
-    const trends = r.summary?.trends || {};
-    const trendChips = Object.entries(trends).map(([sym, t]) =>
-      `${sym} ${pill(t.regime, t.regime)} rsi ${num(t.rsi, 1)}`
-    ).join('  ·  ');
-    const intents = r.summary?.intents || [];
-    return `<div style="border-bottom:1px solid var(--line);padding:.5rem 0">
-      <div>${fmtTime(r.ranAt)} · ${pill(r.mode === 'live' ? 'sell' : 'neutral', r.mode)} · ${intents.length} intent(s)</div>
-      <div style="color:var(--muted);font-size:.8rem;margin-top:.25rem">${trendChips}</div>
-    </div>`;
-  }).join('');
-}
-
-function renderOrders(list) {
-  const el = document.getElementById('orders');
-  if (!list.length) { el.innerHTML = '<tr><td colspan="8" class="empty">none yet</td></tr>'; return; }
-  el.innerHTML = list.slice(0, 50).map(o =>
-    `<tr>
-      <td>${fmtTime(o.createdAt)}</td>
-      <td>${o.symbol}</td>
-      <td>${pill(o.side, o.side)}</td>
-      <td class="num">${o.notional ? '$' + num(o.notional) : ''}</td>
-      <td class="num">${num(o.qty, 8)}</td>
-      <td class="num">${o.filledAvgPrice ? num(o.filledAvgPrice) : ''}</td>
-      <td>${pill(o.status, o.status)}</td>
-      <td style="color:var(--muted);font-size:.8rem">${o.reason || ''}</td>
-    </tr>`
-  ).join('');
 }
 
 refresh();
