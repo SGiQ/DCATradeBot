@@ -9,5 +9,4 @@ logs/
 .idea/
 .vscode/
 coverage/
-drizzle/
 .claude/
