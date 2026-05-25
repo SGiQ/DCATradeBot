@@ -9,6 +9,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/copy-assets.mjs",
+    "prestart": "node dist/db/migrate.js && node dist/db/seed.js",
     "start": "node dist/worker/cron.js",
     "ui:dev": "tsx src/server/ui.ts",
     "run:once": "tsx src/worker/dailyRun.ts",
