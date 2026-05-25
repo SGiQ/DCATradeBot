@@ -27,5 +27,16 @@ npm run run:once           # one manual run (paper)
 ```
 
 ## Live trading
-`LIVE_TRADING` is **off** by default. When enabled, each order is paused for
-Slack-webhook approval before submission &mdash; see `src/safety/liveGate.ts`.
+`LIVE_TRADING` is **off** by default. When enabled, three locks apply before
+any order reaches the broker (see `src/safety/liveGate.ts`):
+
+1. **Key split**: live orders require `ALPACA_LIVE_KEY` + `ALPACA_LIVE_SECRET`
+   (paper keys are never used in live mode).
+2. **Daily cap**: today's submitted live buy notional + this intent must
+   stay &le; `DAILY_LIVE_CAP_USD`, else the intent is `skipped`.
+3. **Slack approval**: the bot inserts an `approvals` row, posts to
+   `SLACK_WEBHOOK_URL` with approve/reject links, then polls until decision
+   or `APPROVAL_TIMEOUT_MIN` (default 30m). Decide via:
+   - Clicking the link served at `PUBLIC_APPROVE_BASE_URL/approve?id=...`
+     (you'll need to run a tiny endpoint for these &mdash; not included in v1)
+   - Or the CLI: `npm run approve &lt;approval-id&gt; [approve|reject]`
