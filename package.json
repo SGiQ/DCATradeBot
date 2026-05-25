@@ -8,8 +8,9 @@
     "node": ">=20.0.0"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node scripts/copy-assets.mjs",
     "start": "node dist/worker/cron.js",
+    "ui:dev": "tsx src/server/ui.ts",
     "run:once": "tsx src/worker/dailyRun.ts",
     "approve": "tsx src/safety/approveCli.ts",
     "db:generate": "drizzle-kit generate",

@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>DCATradeBot</title>
+<style>
+  :root {
+    --bg: #0b0f14; --fg: #e5e7eb; --muted: #9ca3af; --card: #111827;
+    --line: #1f2937; --accent: #22d3ee; --good: #34d399; --bad: #f87171; --warn: #fbbf24;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.4 system-ui, -apple-system, sans-serif; }
+  header { padding: 1rem 1.5rem; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; }
+  h1 { margin: 0; font-size: 1.1rem; letter-spacing: .04em; }
+  .status { color: var(--muted); font-size: .85rem; }
+  main { padding: 1rem 1.5rem; display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 1rem; }
+  .card h2 { margin: 0 0 .75rem; font-size: .85rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+  th, td { text-align: left; padding: .35rem .5rem; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 500; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .pill { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: .75rem; }
+  .pill.uptrend { background: rgba(52,211,153,.15); color: var(--good); }
+  .pill.neutral { background: rgba(156,163,175,.15); color: var(--muted); }
+  .pill.downtrend { background: rgba(248,113,113,.15); color: var(--bad); }
+  .pill.buy { background: rgba(34,211,238,.15); color: var(--accent); }
+  .pill.sell { background: rgba(251,191,36,.15); color: var(--warn); }
+  .pill.filled { background: rgba(52,211,153,.15); color: var(--good); }
+  .pill.error, .pill.rejected, .pill.expired { background: rgba(248,113,113,.15); color: var(--bad); }
+  button { background: var(--accent); color: #0b0f14; border: 0; padding: .25rem .6rem; border-radius: 4px; cursor: pointer; font-weight: 600; }
+  button.reject { background: var(--bad); color: white; margin-left: .25rem; }
+  .empty { color: var(--muted); font-style: italic; padding: .5rem; }
+  pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); padding: .5rem; border-radius: 4px; font-size: .75rem; max-height: 10rem; overflow: auto; }
+  code { font-size: .75rem; color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>DCATradeBot</h1>
+  <div class="status" id="status">loading...</div>
+</header>
+<main>
+  <section class="card" id="approvals-card">
+    <h2>Pending live approvals</h2>
+    <div id="approvals"></div>
+  </section>
+  <section class="card">
+    <h2>Positions (local)</h2>
+    <table><thead><tr><th>Symbol</th><th class="num">Qty</th><th class="num">Avg cost</th><th>Updated</th></tr></thead><tbody id="positions"></tbody></table>
+  </section>
+  <section class="card">
+    <h2>Recent runs</h2>
+    <div id="runs"></div>
+  </section>
+  <section class="card" style="grid-column: 1 / -1;">
+    <h2>Recent orders</h2>
+    <table>
+      <thead><tr><th>When</th><th>Symbol</th><th>Side</th><th class="num">Notional</th><th class="num">Qty</th><th class="num">Filled @</th><th>Status</th><th>Reason</th></tr></thead>
+      <tbody id="orders"></tbody>
+    </table>
+  </section>
+</main>
+<script>
+const fmtTime = (iso) => new Date(iso).toLocaleString();
+const num = (v, dp = 2) => v == null || v === '' ? '' : Number(v).toFixed(dp);
+const pill = (cls, txt) => `<span class="pill ${cls}">${txt}</span>`;
+
+async function fetchJson(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(url + ' -> ' + r.status);
+  return r.json();
+}
+
+async function refresh() {
+  try {
+    const [runs, ords, pos, apv] = await Promise.all([
+      fetchJson('/api/runs'),
+      fetchJson('/api/orders'),
+      fetchJson('/api/positions'),
+      fetchJson('/api/approvals'),
+    ]);
+    renderApprovals(apv);
+    renderPositions(pos);
+    renderRuns(runs);
+    renderOrders(ords);
+    document.getElementById('status').textContent = 'updated ' + new Date().toLocaleTimeString();
+  } catch (e) {
+    document.getElementById('status').textContent = 'error: ' + e.message;
+  }
+}
+
+function renderApprovals(list) {
+  const el = document.getElementById('approvals');
+  if (!list.length) { el.innerHTML = '<div class="empty">none</div>'; return; }
+  el.innerHTML = list.map(a => {
+    const it = a.intent || {};
+    const size = it.notional != null ? '$' + Number(it.notional).toFixed(2) : (it.qty + ' units');
+    return `<div style="border-bottom:1px solid var(--line);padding:.5rem 0">
+      <div>${pill(it.side, (it.side||'').toUpperCase())} <b>${it.symbol}</b> ${size}</div>
+      <div style="color:var(--muted);font-size:.8rem;margin:.25rem 0">${it.reason || ''}</div>
+      <div style="color:var(--muted);font-size:.75rem">expires ${fmtTime(a.expiresAt)} · <code>${a.id}</code></div>
+      <div style="margin-top:.4rem">
+        <button onclick="decide('${a.id}','approve')">Approve</button>
+        <button class="reject" onclick="decide('${a.id}','reject')">Reject</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function decide(id, decision) {
+  const r = await fetch('/api/approvals/' + id, {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ decision })
+  });
+  if (!r.ok) alert('failed: ' + r.status);
+  await refresh();
+}
+
+function renderPositions(list) {
+  const el = document.getElementById('positions');
+  if (!list.length) { el.innerHTML = '<tr><td colspan="4" class="empty">none yet</td></tr>'; return; }
+  el.innerHTML = list.map(p =>
+    `<tr><td>${p.symbol}</td><td class="num">${num(p.qty, 8)}</td><td class="num">${num(p.avgCost)}</td><td>${fmtTime(p.updatedAt)}</td></tr>`
+  ).join('');
+}
+
+function renderRuns(list) {
+  const el = document.getElementById('runs');
+  if (!list.length) { el.innerHTML = '<div class="empty">no runs yet</div>'; return; }
+  el.innerHTML = list.slice(0, 5).map(r => {
+    const trends = r.summary?.trends || {};
+    const trendChips = Object.entries(trends).map(([sym, t]) =>
+      `${sym} ${pill(t.regime, t.regime)} rsi ${num(t.rsi, 1)}`
+    ).join('  ·  ');
+    const intents = r.summary?.intents || [];
+    return `<div style="border-bottom:1px solid var(--line);padding:.5rem 0">
+      <div>${fmtTime(r.ranAt)} · ${pill(r.mode === 'live' ? 'sell' : 'neutral', r.mode)} · ${intents.length} intent(s)</div>
+      <div style="color:var(--muted);font-size:.8rem;margin-top:.25rem">${trendChips}</div>
+    </div>`;
+  }).join('');
+}
+
+function renderOrders(list) {
+  const el = document.getElementById('orders');
+  if (!list.length) { el.innerHTML = '<tr><td colspan="8" class="empty">none yet</td></tr>'; return; }
+  el.innerHTML = list.slice(0, 50).map(o =>
+    `<tr>
+      <td>${fmtTime(o.createdAt)}</td>
+      <td>${o.symbol}</td>
+      <td>${pill(o.side, o.side)}</td>
+      <td class="num">${o.notional ? '$' + num(o.notional) : ''}</td>
+      <td class="num">${num(o.qty, 8)}</td>
+      <td class="num">${o.filledAvgPrice ? num(o.filledAvgPrice) : ''}</td>
+      <td>${pill(o.status, o.status)}</td>
+      <td style="color:var(--muted);font-size:.8rem">${o.reason || ''}</td>
+    </tr>`
+  ).join('');
+}
+
+refresh();
+setInterval(refresh, 15_000);
+</script>
+</body>
+</html>

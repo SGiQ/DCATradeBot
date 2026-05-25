@@ -1,8 +1,11 @@
 import cron from 'node-cron';
 import { loadConfig } from '../config.js';
 import { runOnce } from './dailyRun.js';
+import { startUi } from '../server/ui.js';
 
 const cfg = loadConfig();
+
+if (cfg.UI_ENABLED) startUi();
 
 console.log(`[cron] scheduled: "${cfg.DAILY_CRON}" tz=${cfg.TZ} live=${cfg.LIVE_TRADING}`);
 

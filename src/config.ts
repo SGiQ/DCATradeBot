@@ -29,6 +29,14 @@ const schema = z.object({
   APPROVAL_TIMEOUT_MIN: z.coerce.number().positive().default(30),
   SLACK_WEBHOOK_URL: z.string().url().optional(),
   PUBLIC_APPROVE_BASE_URL: z.string().url().optional(),
+
+  UI_PORT: z.coerce.number().int().positive().default(8080),
+  UI_USER: z.string().optional(),
+  UI_PASS: z.string().optional(),
+  UI_ENABLED: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((v) => v === 'true'),
 });
 
 export type Config = z.infer<typeof schema>;

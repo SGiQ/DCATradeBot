@@ -26,6 +26,22 @@ npm run db:seed            # seeds watchlist: BTC/USD 60%, ETH/USD 40%
 npm run run:once           # one manual run (paper)
 ```
 
+## Dashboard
+`npm start` boots both the cron loop **and** a small dashboard on `UI_PORT`
+(default 8080). The dashboard surfaces:
+
+- Pending live approvals (with Approve / Reject buttons)
+- Local positions snapshot
+- Last 5 daily runs, with the trend regime + RSI per symbol
+- Last 50 orders (status, fill price, reason)
+
+Read APIs are behind HTTP basic auth (`UI_USER`/`UI_PASS` &mdash; the server
+refuses to start without them). The Slack click links (`/approve?id=...`,
+`/reject?id=...`) are unauthenticated; the approval UUID is the secret.
+
+For development: `npm run ui:dev` runs only the UI (no cron). Set
+`UI_ENABLED=false` to run the cron headless.
+
 ## Live trading
 `LIVE_TRADING` is **off** by default. When enabled, three locks apply before
 any order reaches the broker (see `src/safety/liveGate.ts`):
