@@ -2,10 +2,12 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
+import { timingSafeEqual } from 'node:crypto';
 import { desc, eq } from 'drizzle-orm';
 import { loadConfig } from '../config.js';
 import { getDb } from '../db/client.js';
 import { approvals, orders, positions, runLogs, watchlist } from '../db/schema.js';
+import { verifyApprovalSig } from '../safety/liveGate.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -28,7 +30,17 @@ function checkBasicAuth(req: IncomingMessage, user: string, pass: string): boole
   const decoded = Buffer.from(header.slice(6), 'base64').toString('utf8');
   const idx = decoded.indexOf(':');
   if (idx < 0) return false;
-  return decoded.slice(0, idx) === user && decoded.slice(idx + 1) === pass;
+  const suppliedUser = decoded.slice(0, idx);
+  const suppliedPass = decoded.slice(idx + 1);
+  // Use constant-time comparison to prevent timing side-channel attacks
+  try {
+    const userMatch = timingSafeEqual(Buffer.from(user, 'utf8'), Buffer.from(suppliedUser, 'utf8'));
+    const passMatch = timingSafeEqual(Buffer.from(pass, 'utf8'), Buffer.from(suppliedPass, 'utf8'));
+    return userMatch && passMatch;
+  } catch {
+    // Buffers of different lengths throw — means they don't match
+    return false;
+  }
 }
 
 async function handleApiRuns(): Promise<unknown> {
@@ -85,10 +97,18 @@ export function startUi(): void {
       const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
       const path = url.pathname;
 
-      // Slack click links: unauthenticated, knowledge of UUID is the secret.
+      // Slack click links: unauthenticated by URL path, but HMAC-verified by sig param.
       if (req.method === 'GET' && (path === '/approve' || path === '/reject')) {
         const id = url.searchParams.get('id');
         if (!id) return send(res, 400, { error: 'missing id' });
+        const sig = url.searchParams.get('sig');
+        if (!verifyApprovalSig(id, sig, cfg.APPROVAL_SECRET)) {
+          return send(res, 403,
+            '<!doctype html><meta charset=utf-8><title>Forbidden</title>' +
+            '<body style="font-family:system-ui;padding:2rem"><h1>Invalid or missing signature</h1>' +
+            '<p>This link may have expired or been tampered with.</p></body>',
+            'text/html');
+        }
         const decision = path === '/approve' ? 'approved' : 'rejected';
         const ok = await decideApproval(id, decision);
         return send(res, ok ? 200 : 409,

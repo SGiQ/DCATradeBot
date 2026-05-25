@@ -1,9 +1,11 @@
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import { and, desc, eq, gte } from 'drizzle-orm';
 import { request } from 'undici';
 import { loadConfig } from '../config.js';
 import { getDb } from '../db/client.js';
 import { approvals, orders } from '../db/schema.js';
 import type { Intent } from '../engine/strategy.js';
+import type { AlpacaCryptoClient } from '../broker/alpacaCrypto.js';
 
 export interface GateResult {
   approved: boolean;
@@ -18,12 +20,12 @@ const POLL_INTERVAL_MS = 5_000;
  *
  * Steps (live only):
  *   1. Verify ALPACA_LIVE_KEY/SECRET are set.
- *   2. Check today's submitted live spend vs DAILY_LIVE_CAP_USD.
+ *   2. Check today's submitted live spend vs DAILY_LIVE_CAP_USD —
+ *      cross-checked against BOTH local DB and broker account cash.
  *   3. Insert an `approvals` row (status=pending) with an expiry.
- *   4. If NIA_WEBHOOK_URL is set, POST the intent so NIA can notify the user
- *      (SMS/voice/chat); regardless, NIA can also poll via the dca_*
- *      tools any time and decide via the dashboard / CLI / NIA chat.
- *   5. Poll the approvals row until approved | rejected | expired.
+ *   4. Build HMAC-signed approve/reject URLs so link interception
+ *      can't be replayed without knowing APPROVAL_SECRET.
+ *   5. Optionally POST to NIA_WEBHOOK_URL; poll until decision or timeout.
  *
  * Paper mode is a no-op pass-through.
  */
@@ -31,6 +33,7 @@ export async function gateLiveOrder(input: {
   runId: string;
   intent: Intent;
   mode: 'paper' | 'live';
+  alpaca: AlpacaCryptoClient;
 }): Promise<GateResult> {
   if (input.mode === 'paper') {
     return { approved: true, status: 'submitted', reason: 'paper mode' };
@@ -41,7 +44,8 @@ export async function gateLiveOrder(input: {
     return { approved: false, status: 'rejected', reason: 'LIVE_TRADING=true but ALPACA_LIVE_KEY/SECRET unset' };
   }
 
-  const cap = await checkDailyCap(input.intent, cfg.DAILY_LIVE_CAP_USD);
+  // Daily cap: check local DB first (fast), then cross-check broker cash
+  const cap = await checkDailyCap(input.intent, cfg.DAILY_LIVE_CAP_USD, input.alpaca);
   if (!cap.ok) {
     return { approved: false, status: 'skipped', reason: cap.reason };
   }
@@ -62,7 +66,20 @@ export async function gateLiveOrder(input: {
   }
   const approvalId = row.id;
 
-  // Optional push to NIA (fire-and-forget; failure here must not block trading)
+  // Build HMAC-signed URLs (falls back to unsigned if APPROVAL_SECRET not set,
+  // but logs a warning so the operator knows)
+  const approveUrl = cfg.PUBLIC_APPROVE_BASE_URL
+    ? buildSignedUrl(`${cfg.PUBLIC_APPROVE_BASE_URL.replace(/\/$/, '')}/approve`, approvalId, cfg.APPROVAL_SECRET)
+    : null;
+  const rejectUrl = cfg.PUBLIC_APPROVE_BASE_URL
+    ? buildSignedUrl(`${cfg.PUBLIC_APPROVE_BASE_URL.replace(/\/$/, '')}/reject`, approvalId, cfg.APPROVAL_SECRET)
+    : null;
+
+  if (cfg.PUBLIC_APPROVE_BASE_URL && !cfg.APPROVAL_SECRET) {
+    console.warn('[liveGate] WARNING: APPROVAL_SECRET is not set. Approval URLs are unauthenticated — set a 32-char random secret.');
+  }
+
+  // Optional push to NIA (fire-and-forget)
   if (cfg.NIA_WEBHOOK_URL) {
     notifyNia(cfg.NIA_WEBHOOK_URL, {
       type: 'dca.approval.pending',
@@ -70,12 +87,8 @@ export async function gateLiveOrder(input: {
       runId: input.runId,
       intent: input.intent,
       expiresAt: expiresAt.toISOString(),
-      approveUrl: cfg.PUBLIC_APPROVE_BASE_URL
-        ? `${cfg.PUBLIC_APPROVE_BASE_URL.replace(/\/$/, '')}/approve?id=${approvalId}`
-        : null,
-      rejectUrl: cfg.PUBLIC_APPROVE_BASE_URL
-        ? `${cfg.PUBLIC_APPROVE_BASE_URL.replace(/\/$/, '')}/reject?id=${approvalId}`
-        : null,
+      approveUrl,
+      rejectUrl,
     }).catch((err) => console.error('[liveGate] NIA webhook failed:', err));
   }
 
@@ -99,12 +112,51 @@ export async function gateLiveOrder(input: {
   return { approved: false, status: 'expired', reason: `no decision within ${cfg.APPROVAL_TIMEOUT_MIN}m` };
 }
 
-async function checkDailyCap(intent: Intent, capUsd: number): Promise<{ ok: true } | { ok: false; reason: string }> {
+// ---------------------------------------------------------------------------
+// HMAC URL helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a URL with an HMAC-SHA256 signature appended as ?sig=...
+ * If no secret is configured, returns the unsigned URL (with a warning logged
+ * by the caller).
+ */
+export function buildSignedUrl(base: string, id: string, secret?: string): string {
+  if (!secret) return `${base}?id=${id}`;
+  const sig = createHmac('sha256', secret).update(id).digest('hex').slice(0, 24);
+  return `${base}?id=${id}&sig=${sig}`;
+}
+
+/**
+ * Verify a signature from a click URL.
+ * Returns true if APPROVAL_SECRET is not configured (backwards-compatible).
+ */
+export function verifyApprovalSig(id: string, sig: string | null | undefined, secret?: string): boolean {
+  if (!secret) return true; // no secret configured → skip verification
+  if (!sig) return false;
+  const expected = createHmac('sha256', secret).update(id).digest('hex').slice(0, 24);
+  try {
+    return timingSafeEqual(Buffer.from(expected, 'utf8'), Buffer.from(sig, 'utf8'));
+  } catch {
+    return false;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Daily cap check (DB + broker cross-check)
+// ---------------------------------------------------------------------------
+
+async function checkDailyCap(
+  intent: Intent,
+  capUsd: number,
+  alpaca: AlpacaCryptoClient,
+): Promise<{ ok: true } | { ok: false; reason: string }> {
   if (intent.side !== 'buy' || intent.notional === undefined) return { ok: true };
+
   const db = getDb();
   const since = startOfUtcDay();
   const rows = await db
-    .select({ notional: orders.notional, side: orders.side, status: orders.status, createdAt: orders.createdAt })
+    .select({ notional: orders.notional, side: orders.side, status: orders.status })
     .from(orders)
     .where(gte(orders.createdAt, since))
     .orderBy(desc(orders.createdAt));
@@ -117,11 +169,41 @@ async function checkDailyCap(intent: Intent, capUsd: number): Promise<{ ok: true
   if (usedToday + intent.notional > capUsd) {
     return {
       ok: false,
-      reason: `daily live cap: used=${usedToday.toFixed(2)} + this=${intent.notional.toFixed(2)} > cap=${capUsd}`,
+      reason: `daily live cap (DB): used=${usedToday.toFixed(2)} + this=${intent.notional.toFixed(2)} > cap=${capUsd}`,
     };
   }
+
+  // Cross-check: verify broker account has enough cash to cover this order.
+  // This catches cases where the local DB is stale (reset, re-seeded, etc.)
+  try {
+    const account = await alpaca.getAccount();
+    const availableCash = Number(account.cash);
+    if (Number.isFinite(availableCash) && intent.notional > availableCash) {
+      return {
+        ok: false,
+        reason: `broker cash check: available=${availableCash.toFixed(2)} < order=${intent.notional.toFixed(2)}`,
+      };
+    }
+    // Secondary cap check: if broker cash implies more was spent than our DB thinks,
+    // be conservative and block.
+    const impliedSpend = capUsd - availableCash;
+    if (impliedSpend > 0 && impliedSpend + intent.notional > capUsd) {
+      return {
+        ok: false,
+        reason: `daily live cap (broker): implied_used=${impliedSpend.toFixed(2)} + this=${intent.notional.toFixed(2)} > cap=${capUsd}`,
+      };
+    }
+  } catch (err) {
+    // Broker check failure is non-fatal but logged — we already passed the DB check
+    console.warn('[liveGate] broker cash cross-check failed (proceeding on DB check):', err);
+  }
+
   return { ok: true };
 }
+
+// ---------------------------------------------------------------------------
+// Internals
+// ---------------------------------------------------------------------------
 
 async function notifyNia(webhook: string, payload: Record<string, unknown>): Promise<void> {
   const res = await request(webhook, {
@@ -129,7 +211,6 @@ async function notifyNia(webhook: string, payload: Record<string, unknown>): Pro
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
-  // Drain body so the socket can be released
   await res.body.text();
   if (res.statusCode < 200 || res.statusCode >= 300) {
     throw new Error(`NIA webhook ${webhook} -> ${res.statusCode}`);

@@ -17,6 +17,7 @@ const schema = z.object({
   DAILY_CAP_USD: z.coerce.number().positive().default(100),
   TP_PCT: z.coerce.number().positive().default(0.2),
   SELL_FRACTION: z.coerce.number().positive().max(1).default(0.25),
+  STOP_LOSS_PCT: z.coerce.number().positive().max(1).default(0.15),
 
   DAILY_CRON: z.string().default('0 13 * * *'),
   TZ: z.string().default('UTC'),
@@ -27,6 +28,7 @@ const schema = z.object({
     .transform((v) => v === 'true'),
   DAILY_LIVE_CAP_USD: z.coerce.number().positive().default(100),
   APPROVAL_TIMEOUT_MIN: z.coerce.number().positive().default(30),
+  APPROVAL_SECRET: z.string().min(16).optional(),
   NIA_WEBHOOK_URL: z.string().url().optional(),
   PUBLIC_APPROVE_BASE_URL: z.string().url().optional(),
 

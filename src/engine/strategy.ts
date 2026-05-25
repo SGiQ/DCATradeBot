@@ -16,8 +16,9 @@ export interface StrategyConfig {
   baseDailyUsd: number;
   extraDailyUsd: number;
   dailyCapUsd: number;
-  tpPct: number; // 0.20 = 20%
-  sellFraction: number; // 0..1
+  tpPct: number;       // 0.20 = 20% gain → take-profit trigger
+  sellFraction: number; // 0..1 fraction of position to sell on TP
+  stopLossPct: number; // 0.15 = exit full position at -15% loss
 }
 
 export interface Intent {
@@ -85,15 +86,37 @@ export function decide(input: {
     }
   }
 
-  // Sell rule
+  // Sell rules: stop-loss takes priority over take-profit
   const sells: Intent[] = [];
+  const symbolsWithSell = new Set<string>();
+
   for (const w of watchlist) {
     const pos = positions[w.symbol];
     const trend = trends[w.symbol];
     if (!pos || !trend) continue;
     if (pos.qty <= 0 || pos.avgCost <= 0) continue;
-    const gain = (pos.lastPrice - pos.avgCost) / pos.avgCost;
-    if (gain >= cfg.tpPct && trend.regime === 'downtrend') {
+
+    const pnlPct = (pos.lastPrice - pos.avgCost) / pos.avgCost;
+
+    // Stop-loss: full exit, overrides everything else for this symbol
+    if (pnlPct <= -cfg.stopLossPct) {
+      const sellQty = round8(pos.qty);
+      if (sellQty > 0) {
+        sells.push({
+          symbol: w.symbol,
+          side: 'sell',
+          qty: sellQty,
+          reason:
+            `stop-loss: loss=${(pnlPct * 100).toFixed(1)}% <= -${(cfg.stopLossPct * 100).toFixed(0)}%; ` +
+            `full exit`,
+        });
+        symbolsWithSell.add(w.symbol);
+      }
+      continue; // skip TP evaluation for this symbol
+    }
+
+    // Take-profit: partial exit only in downtrend
+    if (pnlPct >= cfg.tpPct && trend.regime === 'downtrend') {
       const sellQty = round8(pos.qty * cfg.sellFraction);
       if (sellQty > 0) {
         sells.push({
@@ -101,14 +124,19 @@ export function decide(input: {
           side: 'sell',
           qty: sellQty,
           reason:
-            `tp: gain=${(gain * 100).toFixed(1)}% >= ${(cfg.tpPct * 100).toFixed(0)}% ` +
+            `tp: gain=${(pnlPct * 100).toFixed(1)}% >= ${(cfg.tpPct * 100).toFixed(0)}% ` +
             `and regime=downtrend; sell ${(cfg.sellFraction * 100).toFixed(0)}% of qty`,
         });
+        symbolsWithSell.add(w.symbol);
       }
     }
   }
 
-  return [...buys, ...sells];
+  // Deduplicate: drop any buy intent for a symbol that already has a sell this run.
+  // Buying and selling the same symbol in one run wastes fees and distorts cost basis.
+  const filteredBuys = buys.filter((b) => !symbolsWithSell.has(b.symbol));
+
+  return [...filteredBuys, ...sells];
 }
 
 function round2(n: number): number {

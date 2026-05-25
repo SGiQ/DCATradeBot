@@ -69,6 +69,7 @@ export async function runOnce(): Promise<RunResult> {
     dailyCapUsd: cfg.DAILY_CAP_USD,
     tpPct: cfg.TP_PCT,
     sellFraction: cfg.SELL_FRACTION,
+    stopLossPct: cfg.STOP_LOSS_PCT,
   };
   const intents = decide({ watchlist: entries, trends, positions: positionSnaps, cfg: strategyCfg });
 
@@ -94,7 +95,7 @@ export async function runOnce(): Promise<RunResult> {
     const clientOrderId = `dca-${runId.slice(0, 8)}-${intent.symbol.replace('/', '')}-${intent.side}`;
 
     // Live-mode gate (no-op in paper)
-    const gate = await gateLiveOrder({ runId, intent, mode });
+    const gate = await gateLiveOrder({ runId, intent, mode, alpaca });
     if (!gate.approved) {
       await db.insert(orders).values({
         runId,
