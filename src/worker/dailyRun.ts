@@ -43,7 +43,10 @@ export async function runOnce(): Promise<RunResult> {
   for (const e of entries) {
     const bars = await alpaca.getDailyBars(e.symbol, 250);
     const closes = bars.map((b) => b.c);
-    trends[e.symbol] = classifyTrend(closes);
+    const today = classifyTrend(closes);
+    // prevSma50/200 lets decide() detect the textbook death-cross.
+    const prev = closes.length > 1 ? classifyTrend(closes.slice(0, -1)) : undefined;
+    trends[e.symbol] = { ...today, prevSma50: prev?.sma50, prevSma200: prev?.sma200 };
   }
 
   // 3. Read positions from broker, plus latest price for sell-rule math
@@ -70,8 +73,26 @@ export async function runOnce(): Promise<RunResult> {
     tpPct: cfg.TP_PCT,
     sellFraction: cfg.SELL_FRACTION,
     stopLossPct: cfg.STOP_LOSS_PCT,
+    deathCrossSellFraction: cfg.DEATH_CROSS_SELL_FRACTION,
+    goldenCrossBuyFraction: cfg.GOLDEN_CROSS_BUY_FRACTION,
   };
-  const intents = decide({ watchlist: entries, trends, positions: positionSnaps, cfg: strategyCfg });
+  // Read available cash for golden-cross redeploy. Best-effort: if Alpaca
+  // returns junk we fall back to undefined (skips the golden-cross branch).
+  let availableCash: number | undefined;
+  try {
+    const account = await alpaca.getAccount();
+    const parsed = Number(account.cash);
+    if (Number.isFinite(parsed) && parsed >= 0) availableCash = parsed;
+  } catch {
+    /* leave undefined → golden-cross branch no-ops */
+  }
+  const intents = decide({
+    watchlist: entries,
+    trends,
+    positions: positionSnaps,
+    cfg: strategyCfg,
+    availableCash,
+  });
 
   // 5. Write run log
   await db.insert(runLogs).values({

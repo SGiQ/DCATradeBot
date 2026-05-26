@@ -168,7 +168,11 @@ export async function runBacktest(cfg: BacktestConfig): Promise<BacktestResult> 
     for (const symbol of cfg.symbols) {
       const sliced = barsUpTo(bars[symbol] ?? [], tickT);
       const closes = sliced.map((b) => b.c);
-      trends[symbol] = classifyTrend(closes);
+      const today = classifyTrend(closes);
+      // prevSma50/200: re-classify bars up to yesterday so decide() can detect
+      // the textbook death-cross (sma50 was >= sma200, today is <)
+      const prev = closes.length > 1 ? classifyTrend(closes.slice(0, -1)) : undefined;
+      trends[symbol] = { ...today, prevSma50: prev?.sma50, prevSma200: prev?.sma200 };
 
       const todayBar = sliced[sliced.length - 1];
       if (!todayBar) continue;
@@ -194,6 +198,7 @@ export async function runBacktest(cfg: BacktestConfig): Promise<BacktestResult> 
       trends,
       positions: positionSnaps,
       cfg: cfg.strategy,
+      availableCash: broker.cash, // for golden-cross lump redeploy
     });
 
     // 6. Queue strategy orders

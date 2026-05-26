@@ -9,6 +9,8 @@ const cfg: StrategyConfig = {
   tpPct: 0.2,
   sellFraction: 0.25,
   stopLossPct: 0.15,
+  deathCrossSellFraction: 0.5,
+  goldenCrossBuyFraction: 0.5,
 };
 
 const watchlist = [
@@ -16,8 +18,21 @@ const watchlist = [
   { symbol: 'ETH/USD', basePct: 0.4 },
 ];
 
-function trend(regime: TrendReading['regime'], price = 50000, rsi = 55): TrendReading {
-  return { regime, price, sma50: 0, sma200: 0, rsi };
+function trend(
+  regime: TrendReading['regime'],
+  price = 50000,
+  rsi = 55,
+  smaParams: { sma50?: number; sma200?: number; prevSma50?: number; prevSma200?: number } = {},
+): TrendReading {
+  return {
+    regime,
+    price,
+    sma50: smaParams.sma50 ?? 0,
+    sma200: smaParams.sma200 ?? 0,
+    rsi,
+    prevSma50: smaParams.prevSma50,
+    prevSma200: smaParams.prevSma200,
+  };
 }
 
 describe('decide / sizing', () => {
@@ -152,6 +167,193 @@ describe('decide / stop-loss', () => {
     const sells = intents.filter((i) => i.side === 'sell' && i.symbol === 'BTC/USD');
     expect(sells).toHaveLength(1);
     expect(sells[0]!.reason).toContain('stop-loss');
+  });
+});
+
+describe('decide / death-cross', () => {
+  it('fires on sma50 crossing below sma200 with a position', () => {
+    const intents = decide({
+      watchlist,
+      trends: {
+        'BTC/USD': trend('neutral', 50000, 50, {
+          sma50: 49000, sma200: 50000, prevSma50: 50100, prevSma200: 50000,
+        }),
+        'ETH/USD': trend('neutral'),
+      },
+      positions: {
+        'BTC/USD': { symbol: 'BTC/USD', qty: 0.10, avgCost: 50000, lastPrice: 50000 },
+      },
+      cfg,
+    });
+    const sell = intents.find((i) => i.side === 'sell' && i.symbol === 'BTC/USD');
+    expect(sell).toBeDefined();
+    expect(sell!.qty).toBeCloseTo(0.05, 6); // 50% of 0.10
+    expect(sell!.reason).toContain('death-cross');
+  });
+
+  it('does NOT fire when sma50 was already below sma200 yesterday (no cross today)', () => {
+    const intents = decide({
+      watchlist,
+      trends: {
+        'BTC/USD': trend('neutral', 50000, 50, {
+          sma50: 48000, sma200: 50000, prevSma50: 48500, prevSma200: 50000,
+        }),
+        'ETH/USD': trend('neutral'),
+      },
+      positions: {
+        'BTC/USD': { symbol: 'BTC/USD', qty: 0.10, avgCost: 50000, lastPrice: 50000 },
+      },
+      cfg,
+    });
+    expect(
+      intents.find((i) => i.side === 'sell' && i.reason?.includes('death-cross')),
+    ).toBeUndefined();
+  });
+
+  it('does NOT fire on a golden cross (sma50 crossing ABOVE sma200)', () => {
+    const intents = decide({
+      watchlist,
+      trends: {
+        'BTC/USD': trend('neutral', 50000, 55, {
+          sma50: 50100, sma200: 50000, prevSma50: 49900, prevSma200: 50000,
+        }),
+        'ETH/USD': trend('neutral'),
+      },
+      positions: {
+        'BTC/USD': { symbol: 'BTC/USD', qty: 0.10, avgCost: 50000, lastPrice: 50000 },
+      },
+      cfg,
+    });
+    expect(
+      intents.find((i) => i.side === 'sell' && i.reason?.includes('death-cross')),
+    ).toBeUndefined();
+  });
+
+  it('does NOT fire without a held position', () => {
+    const intents = decide({
+      watchlist,
+      trends: {
+        'BTC/USD': trend('neutral', 50000, 50, {
+          sma50: 49000, sma200: 50000, prevSma50: 50100, prevSma200: 50000,
+        }),
+        'ETH/USD': trend('neutral'),
+      },
+      positions: {},
+      cfg,
+    });
+    expect(intents.find((i) => i.side === 'sell')).toBeUndefined();
+  });
+
+  it('does NOT fire when prev SMA values are undefined (insufficient history)', () => {
+    const intents = decide({
+      watchlist,
+      trends: {
+        'BTC/USD': trend('neutral', 50000, 50, { sma50: 49000, sma200: 50000 }),
+        'ETH/USD': trend('neutral'),
+      },
+      positions: {
+        'BTC/USD': { symbol: 'BTC/USD', qty: 0.10, avgCost: 50000, lastPrice: 50000 },
+      },
+      cfg,
+    });
+    expect(
+      intents.find((i) => i.side === 'sell' && i.reason?.includes('death-cross')),
+    ).toBeUndefined();
+  });
+});
+
+describe('decide / golden-cross redeploy', () => {
+  it('fires when sma50 crosses above sma200 with available cash', () => {
+    const intents = decide({
+      watchlist,
+      trends: {
+        'BTC/USD': trend('neutral', 50000, 55, {
+          sma50: 50100, sma200: 50000, prevSma50: 49900, prevSma200: 50000,
+        }),
+        'ETH/USD': trend('neutral', 3000, 50, {
+          sma50: 3000, sma200: 3000, prevSma50: 3000, prevSma200: 3000,
+        }),
+      },
+      positions: {},
+      cfg,
+      availableCash: 1000,
+    });
+    const gcBuys = intents.filter((i) => i.side === 'buy' && i.reason?.includes('golden-cross'));
+    expect(gcBuys).toHaveLength(2); // one per watchlist symbol
+    // 50% of $1000 = $500 deployed; 60/40 split → $300 BTC, $200 ETH
+    const btc = gcBuys.find((i) => i.symbol === 'BTC/USD')!;
+    const eth = gcBuys.find((i) => i.symbol === 'ETH/USD')!;
+    expect(btc.notional).toBeCloseTo(300, 2);
+    expect(eth.notional).toBeCloseTo(200, 2);
+  });
+
+  it('does NOT fire without available cash', () => {
+    const intents = decide({
+      watchlist,
+      trends: {
+        'BTC/USD': trend('neutral', 50000, 55, {
+          sma50: 50100, sma200: 50000, prevSma50: 49900, prevSma200: 50000,
+        }),
+        'ETH/USD': trend('neutral'),
+      },
+      positions: {},
+      cfg,
+      availableCash: 0,
+    });
+    expect(
+      intents.find((i) => i.reason?.includes('golden-cross')),
+    ).toBeUndefined();
+  });
+
+  it('does NOT fire when availableCash is omitted (pure DCA mode)', () => {
+    const intents = decide({
+      watchlist,
+      trends: {
+        'BTC/USD': trend('neutral', 50000, 55, {
+          sma50: 50100, sma200: 50000, prevSma50: 49900, prevSma200: 50000,
+        }),
+        'ETH/USD': trend('neutral'),
+      },
+      positions: {},
+      cfg,
+    });
+    expect(
+      intents.find((i) => i.reason?.includes('golden-cross')),
+    ).toBeUndefined();
+  });
+
+  it('does NOT fire on a death cross (sma50 crossing BELOW sma200)', () => {
+    const intents = decide({
+      watchlist,
+      trends: {
+        'BTC/USD': trend('neutral', 50000, 45, {
+          sma50: 49000, sma200: 50000, prevSma50: 50100, prevSma200: 50000,
+        }),
+        'ETH/USD': trend('neutral'),
+      },
+      positions: {},
+      cfg,
+      availableCash: 1000,
+    });
+    expect(
+      intents.find((i) => i.reason?.includes('golden-cross')),
+    ).toBeUndefined();
+  });
+
+  it('does NOT fire when prev SMA values are undefined', () => {
+    const intents = decide({
+      watchlist,
+      trends: {
+        'BTC/USD': trend('neutral', 50000, 55, { sma50: 50100, sma200: 50000 }),
+        'ETH/USD': trend('neutral'),
+      },
+      positions: {},
+      cfg,
+      availableCash: 1000,
+    });
+    expect(
+      intents.find((i) => i.reason?.includes('golden-cross')),
+    ).toBeUndefined();
   });
 });
 

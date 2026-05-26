@@ -18,7 +18,9 @@ export interface StrategyConfig {
   dailyCapUsd: number;
   tpPct: number;       // 0.20 = 20% gain → take-profit trigger
   sellFraction: number; // 0..1 fraction of position to sell on TP
-  stopLossPct: number; // 0.15 = exit full position at -15% loss
+  stopLossPct: number; // 0.70 = catastrophic exit at -70% loss (see config.ts)
+  deathCrossSellFraction: number; // 0..1 fraction sold on sma50<sma200 cross
+  goldenCrossBuyFraction: number; // 0..1 fraction of cash deployed on sma50>sma200 cross
 }
 
 export interface Intent {
@@ -54,8 +56,11 @@ export function decide(input: {
   trends: Record<string, TrendReading>;
   positions: Record<string, PositionSnapshot>;
   cfg: StrategyConfig;
+  // Free cash available right now. Used only by the golden-cross lump
+  // redeploy; omitted callers get no golden-cross buys (pure DCA behavior).
+  availableCash?: number;
 }): Intent[] {
-  const { watchlist, trends, positions, cfg } = input;
+  const { watchlist, trends, positions, cfg, availableCash } = input;
   const buys: Intent[] = [];
 
   for (const w of watchlist) {
@@ -86,6 +91,44 @@ export function decide(input: {
     }
   }
 
+  // Golden-cross redeploy: when ANY watchlist symbol's sma50 crosses ABOVE
+  // sma200 today, deploy goldenCrossBuyFraction of available cash across the
+  // watchlist by basePct. Bypasses dailyCapUsd — this is a regime-change
+  // event, not a daily DCA buy.
+  if (availableCash !== undefined && availableCash > 0) {
+    const crossedUpSymbols = watchlist.filter((w) => {
+      const t = trends[w.symbol];
+      if (!t) return false;
+      const p50 = t.prevSma50;
+      const p200 = t.prevSma200;
+      return (
+        Number.isFinite(p50) &&
+        Number.isFinite(p200) &&
+        Number.isFinite(t.sma50) &&
+        Number.isFinite(t.sma200) &&
+        (p50 as number) <= (p200 as number) &&
+        t.sma50 > t.sma200
+      );
+    });
+    if (crossedUpSymbols.length > 0) {
+      const deployTotal = availableCash * cfg.goldenCrossBuyFraction;
+      const reasonSuffix = crossedUpSymbols.map((w) => w.symbol).join(',');
+      for (const w of watchlist) {
+        const notional = round2(deployTotal * w.basePct);
+        if (notional <= 0) continue;
+        buys.push({
+          symbol: w.symbol,
+          side: 'buy',
+          notional,
+          reason:
+            `golden-cross redeploy on ${reasonSuffix}: ` +
+            `${(cfg.goldenCrossBuyFraction * 100).toFixed(0)}% of cash ` +
+            `($${availableCash.toFixed(2)}) at basePct ${(w.basePct * 100).toFixed(0)}%`,
+        });
+      }
+    }
+  }
+
   // Sell rules: stop-loss takes priority over take-profit
   const sells: Intent[] = [];
   const symbolsWithSell = new Set<string>();
@@ -109,6 +152,37 @@ export function decide(input: {
           reason:
             `stop-loss: loss=${(pnlPct * 100).toFixed(1)}% <= -${(cfg.stopLossPct * 100).toFixed(0)}%; ` +
             `full exit`,
+        });
+        symbolsWithSell.add(w.symbol);
+      }
+      continue; // skip remaining sell evals for this symbol
+    }
+
+    // Death-cross: textbook SMA50/SMA200 bearish crossover today.
+    // High-conviction "the long-term trend just broke" exit — fires only on
+    // the actual cross, typically 1-3 times per multi-year cycle. P&L-agnostic
+    // by design (we sell because structure changed, not because we're up/down).
+    const prev50 = trend.prevSma50;
+    const prev200 = trend.prevSma200;
+    const crossedDownToday =
+      Number.isFinite(prev50) &&
+      Number.isFinite(prev200) &&
+      Number.isFinite(trend.sma50) &&
+      Number.isFinite(trend.sma200) &&
+      (prev50 as number) >= (prev200 as number) &&
+      trend.sma50 < trend.sma200;
+    if (crossedDownToday) {
+      const sellQty = round8(pos.qty * cfg.deathCrossSellFraction);
+      if (sellQty > 0) {
+        sells.push({
+          symbol: w.symbol,
+          side: 'sell',
+          qty: sellQty,
+          reason:
+            `death-cross: sma50 crossed below sma200 ` +
+            `(${trend.sma50.toFixed(0)} < ${trend.sma200.toFixed(0)}); ` +
+            `sell ${(cfg.deathCrossSellFraction * 100).toFixed(0)}% of qty ` +
+            `(pnl=${(pnlPct * 100).toFixed(1)}%)`,
         });
         symbolsWithSell.add(w.symbol);
       }

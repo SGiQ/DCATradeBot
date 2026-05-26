@@ -57,21 +57,36 @@ export async function fetchDailyBars(
     url.searchParams.set('limit', String(PAGE_LIMIT));
     if (pageToken) url.searchParams.set('page_token', pageToken);
 
-    // Fetch with 429 retry
+    // Fetch with 429 retry.
+    // Alpaca's crypto bars endpoint is public — auth headers are only useful
+    // for higher-tier data feeds. Omit them if the secret is empty or still
+    // the .env.example placeholder so backtests work before live creds exist.
+    const hasRealSecret =
+      !!cfg.ALPACA_SECRET_KEY &&
+      !cfg.ALPACA_SECRET_KEY.startsWith('__PASTE');
+    let headers: Record<string, string> = hasRealSecret
+      ? {
+          'APCA-API-KEY-ID': cfg.ALPACA_API_KEY,
+          'APCA-API-SECRET-KEY': cfg.ALPACA_SECRET_KEY,
+        }
+      : {};
     let data: BarsResponse | null = null;
     for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
       const res = await request(url.toString(), {
         method: 'GET',
-        headers: {
-          'APCA-API-KEY-ID': cfg.ALPACA_API_KEY,
-          'APCA-API-SECRET-KEY': cfg.ALPACA_SECRET_KEY,
-        },
+        headers,
       });
       const text = await res.body.text();
       if (res.statusCode === 429 && attempt < RETRY_DELAYS_MS.length) {
         const delay = RETRY_DELAYS_MS[attempt]!;
         process.stdout.write(`\r[barFetcher] ${symbol} rate-limited, sleeping ${Math.round(delay / 1000)}s (attempt ${attempt + 1}/${RETRY_DELAYS_MS.length})...     `);
         await sleep(delay);
+        continue;
+      }
+      if (res.statusCode === 401 && Object.keys(headers).length > 0) {
+        // Crypto bars are public — bad/mismatched creds shouldn't block us.
+        console.log(`\n[barFetcher] ${symbol} got 401 with creds; retrying unauthenticated (crypto bars are public)`);
+        headers = {};
         continue;
       }
       if (res.statusCode < 200 || res.statusCode >= 300) {

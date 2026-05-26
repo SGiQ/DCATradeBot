@@ -53,6 +53,8 @@ async function main() {
       tpPct: cfg.TP_PCT,
       sellFraction: cfg.SELL_FRACTION,
       stopLossPct: cfg.STOP_LOSS_PCT,
+      deathCrossSellFraction: cfg.DEATH_CROSS_SELL_FRACTION,
+      goldenCrossBuyFraction: cfg.GOLDEN_CROSS_BUY_FRACTION,
     },
   };
 
