@@ -13,6 +13,7 @@
     "start": "node dist/worker/cron.js",
     "ui:dev": "tsx src/server/ui.ts",
     "run:once": "tsx src/worker/dailyRun.ts",
+    "backtest": "tsx src/backtest/runBacktest.ts",
     "approve": "tsx src/safety/approveCli.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate.ts",
