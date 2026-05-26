@@ -9,7 +9,17 @@ let dbInstance: ReturnType<typeof drizzle<typeof schema>> | null = null;
 export function getDb() {
   if (dbInstance) return dbInstance;
   const cfg = loadConfig();
-  pool = new pg.Pool({ connectionString: cfg.DATABASE_URL, max: 5 });
+  if (!cfg.DATABASE_URL) {
+    throw new Error('DATABASE_URL is required for this command but is not set');
+  }
+  // Railway's public Postgres URL requires SSL; the internal URL accepts it
+  // either way. Local Postgres (Docker, localhost) does not use SSL.
+  const isLocal = /localhost|127\.0\.0\.1/.test(cfg.DATABASE_URL);
+  pool = new pg.Pool({
+    connectionString: cfg.DATABASE_URL,
+    max: 5,
+    ssl: isLocal ? undefined : { rejectUnauthorized: false },
+  });
   dbInstance = drizzle(pool, { schema });
   return dbInstance;
 }

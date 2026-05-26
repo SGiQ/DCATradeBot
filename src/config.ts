@@ -1,4 +1,13 @@
 import { z } from 'zod';
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
+
+// Auto-load .env if present (Node 20.12+ native, no dep). Idempotent.
+// No-op on Railway where env vars are injected natively.
+const envPath = resolve(process.cwd(), '.env');
+if (existsSync(envPath) && typeof process.loadEnvFile === 'function') {
+  try { process.loadEnvFile(envPath); } catch { /* malformed or already loaded */ }
+}
 
 const schema = z.object({
   ALPACA_API_KEY: z.string().min(1),
@@ -10,7 +19,9 @@ const schema = z.object({
   ALPACA_LIVE_SECRET: z.string().optional(),
   ALPACA_LIVE_BASE_URL: z.string().url().default('https://api.alpaca.markets'),
 
-  DATABASE_URL: z.string().min(1),
+  // Optional: required by the cron worker + UI, but the backtester doesn't
+  // touch the database. getDb() in db/client.ts throws if missing at use time.
+  DATABASE_URL: z.string().optional(),
 
   BASE_DAILY_USD: z.coerce.number().positive().default(50),
   EXTRA_DAILY_USD: z.coerce.number().nonnegative().default(25),
