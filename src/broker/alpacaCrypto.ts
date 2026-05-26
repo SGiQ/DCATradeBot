@@ -103,10 +103,24 @@ export class AlpacaCryptoClient {
 
   /** Daily bars for a crypto symbol. `symbol` like 'BTC/USD'. */
   async getDailyBars(symbol: string, limit = 250): Promise<CryptoBar[]> {
+    // Explicit start/end is required: without them, Alpaca v1beta3 returns
+    // a small recent slice (often < 20 bars) regardless of `limit`. Crypto
+    // trades 365d/yr so `limit` days back = `limit` bars.
+    const end = new Date();
+    const start = new Date(end);
+    start.setUTCDate(end.getUTCDate() - limit);
     const data = await this.req<{ bars: Record<string, CryptoBar[]> }>(
       this.dataBase,
       '/v1beta3/crypto/us/bars',
-      { query: { symbols: symbol, timeframe: '1Day', limit } },
+      {
+        query: {
+          symbols: symbol,
+          timeframe: '1Day',
+          limit,
+          start: start.toISOString(),
+          end: end.toISOString(),
+        },
+      },
     );
     return data.bars?.[symbol] ?? [];
   }

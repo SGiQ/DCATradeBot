@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { pathToFileURL } from 'node:url';
 import { eq } from 'drizzle-orm';
 import { loadConfig } from '../config.js';
 import { AlpacaCryptoClient } from '../broker/alpacaCrypto.js';
@@ -190,8 +191,9 @@ function round(n: number, dp: number): number {
   return Number.isFinite(n) ? Math.round(n * f) / f : n;
 }
 
-// Direct execution: `npm run run:once`
-if (import.meta.url === `file://${process.argv[1]}`) {
+// Direct execution: `npm run run:once`. pathToFileURL normalizes backslashes
+// + drive letters so this works on Windows as well as POSIX.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   runOnce()
     .then(async (r) => {
       console.log(JSON.stringify(r, null, 2));
