@@ -57,6 +57,11 @@ const schema = z.object({
   APPROVAL_TIMEOUT_MIN: z.coerce.number().positive().default(30),
   APPROVAL_SECRET: z.string().min(16).optional(),
   NIA_WEBHOOK_URL: z.preprocess((v) => (v === '' ? undefined : v), z.string().url().optional()),
+  // After each runOnce(), DCA posts a snapshot to NIA so its dashboard pill
+  // stays fresh without polling. Both vars must be set or the push silently
+  // no-ops. Header X-Webhook-Secret must equal NIA's TRADEBOT_WEBHOOK_SECRET.
+  NIA_STATUS_URL: z.preprocess((v) => (v === '' ? undefined : v), z.string().url().optional()),
+  NIA_WEBHOOK_SECRET: z.preprocess((v) => (v === '' ? undefined : v), z.string().min(8).optional()),
   PUBLIC_APPROVE_BASE_URL: z.preprocess((v) => (v === '' ? undefined : v), z.string().url().optional()),
 
   UI_PORT: z.coerce.number().int().positive().default(8080),

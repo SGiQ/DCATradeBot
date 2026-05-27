@@ -14,6 +14,7 @@ import {
 import { getDb, closeDb } from '../db/client.js';
 import { watchlist, runLogs, orders, positions } from '../db/schema.js';
 import { gateLiveOrder } from '../safety/liveGate.js';
+import { pushSnapshotToNia } from '../notifications/niaPush.js';
 
 export interface RunResult {
   runId: string;
@@ -181,6 +182,27 @@ export async function runOnce(): Promise<RunResult> {
         target: positions.symbol,
         set: { qty: String(p.qty), avgCost: String(p.avg_entry_price), updatedAt: new Date() },
       });
+  }
+
+  // 8. Push fresh snapshot to NIA (fire-and-forget; no-op if vars unset)
+  try {
+    const account = await alpaca.getAccount();
+    const portfolio = Number(account.portfolio_value);
+    const cash = Number(account.cash);
+    const equity = account.equity != null ? Number(account.equity) : undefined;
+    const lastEquity = account.last_equity != null ? Number(account.last_equity) : undefined;
+    const todayPnl = equity != null && lastEquity != null ? equity - lastEquity : undefined;
+    await pushSnapshotToNia({
+      portfolio: Number.isFinite(portfolio) ? portfolio : undefined,
+      cash: Number.isFinite(cash) ? cash : undefined,
+      buying_power: account.buying_power != null ? Number(account.buying_power) : undefined,
+      open_trades: fresh.length,
+      today_pnl: todayPnl != null && Number.isFinite(todayPnl) ? todayPnl : undefined,
+      last_run_at: new Date().toISOString(),
+      mode,
+    });
+  } catch {
+    /* niaPush already swallows errors; this only catches account-fetch failures */
   }
 
   return { runId, mode, intents, submitted };

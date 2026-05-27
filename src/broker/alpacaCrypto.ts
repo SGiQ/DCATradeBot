@@ -137,7 +137,14 @@ export class AlpacaCryptoClient {
     return trade.p;
   }
 
-  async getAccount(): Promise<{ cash: string; portfolio_value: string; status: string }> {
+  async getAccount(): Promise<{
+    cash: string;
+    portfolio_value: string;
+    status: string;
+    equity?: string;
+    last_equity?: string;
+    buying_power?: string;
+  }> {
     return this.req(this.tradingBase, '/v2/account');
   }
 
