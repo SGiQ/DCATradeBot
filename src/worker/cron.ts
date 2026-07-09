@@ -5,7 +5,16 @@ import { startUi } from '../server/ui.js';
 
 const cfg = loadConfig();
 
-if (cfg.UI_ENABLED) startUi();
+// A UI failure (missing UI_USER/UI_PASS, port already in use, etc.) must NOT
+// take down the trading worker — the dashboard is non-critical. Isolate it so
+// the cron keeps running even if startUi() throws at boot.
+if (cfg.UI_ENABLED) {
+  try {
+    startUi();
+  } catch (err) {
+    console.error('[cron] UI failed to start; trading continues without it:', err);
+  }
+}
 
 console.log(`[cron] scheduled: "${cfg.DAILY_CRON}" tz=${cfg.TZ} live=${cfg.LIVE_TRADING}`);
 
