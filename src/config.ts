@@ -9,6 +9,19 @@ if (existsSync(envPath) && typeof process.loadEnvFile === 'function') {
   try { process.loadEnvFile(envPath); } catch { /* malformed or already loaded */ }
 }
 
+// Values pasted into hosting dashboards (Railway, etc.) routinely pick up a
+// stray trailing space or odd casing — e.g. "false ". For a boolean flag fed
+// to an exact-match enum, that one character throws at loadConfig() and, since
+// this runs at module load in prestart/cron, crash-loops the whole worker.
+// Normalize (trim + lowercase) before the enum check so it can't happen.
+const boolFlag = (def: 'true' | 'false') =>
+  z
+    .preprocess(
+      (v) => (typeof v === 'string' ? v.trim().toLowerCase() : v),
+      z.enum(['true', 'false']).default(def),
+    )
+    .transform((v) => v === 'true');
+
 const schema = z.object({
   ALPACA_API_KEY: z.string().min(1),
   ALPACA_SECRET_KEY: z.string().min(1),
@@ -49,10 +62,7 @@ const schema = z.object({
   DAILY_CRON: z.string().default('0 13 * * *'),
   TZ: z.string().default('UTC'),
 
-  LIVE_TRADING: z
-    .enum(['true', 'false'])
-    .default('false')
-    .transform((v) => v === 'true'),
+  LIVE_TRADING: boolFlag('false'),
   DAILY_LIVE_CAP_USD: z.coerce.number().positive().default(100),
   APPROVAL_TIMEOUT_MIN: z.coerce.number().positive().default(30),
   APPROVAL_SECRET: z.string().min(16).optional(),
@@ -67,10 +77,7 @@ const schema = z.object({
   UI_PORT: z.coerce.number().int().positive().default(8080),
   UI_USER: z.string().optional(),
   UI_PASS: z.string().optional(),
-  UI_ENABLED: z
-    .enum(['true', 'false'])
-    .default('true')
-    .transform((v) => v === 'true'),
+  UI_ENABLED: boolFlag('true'),
 });
 
 export type Config = z.infer<typeof schema>;
