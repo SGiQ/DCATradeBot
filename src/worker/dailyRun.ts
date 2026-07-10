@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
-import { eq } from 'drizzle-orm';
+import { and, desc, eq, isNotNull, notInArray } from 'drizzle-orm';
 import { loadConfig } from '../config.js';
 import { AlpacaCryptoClient } from '../broker/alpacaCrypto.js';
 import { classifyTrend, type TrendReading } from '../indicators/index.js';
@@ -23,12 +23,103 @@ export interface RunResult {
   submitted: Array<{ intent: Intent; status: string; brokerOrderId?: string; error?: string }>;
 }
 
+// Statuses Alpaca will never move an order out of. Anything else (accepted,
+// new, pending_new, partially_filled, held, …) is still in flight and worth
+// re-checking. Include both US/UK spellings of "canceled" defensively.
+const TERMINAL_ORDER_STATUSES = [
+  'filled',
+  'canceled',
+  'cancelled',
+  'expired',
+  'rejected',
+  'replaced',
+  'done_for_day',
+  'stopped',
+] as const;
+const TERMINAL_SET = new Set<string>(TERMINAL_ORDER_STATUSES);
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/**
+ * A POST /v2/orders response is almost always pre-fill (pending_new/accepted);
+ * crypto market orders then fill within ~1-2s. Poll briefly for the terminal
+ * state so we can persist the real outcome + fill price. Best-effort: returns
+ * the latest state seen even if it never reached a terminal status.
+ */
+async function waitForTerminal(
+  alpaca: AlpacaCryptoClient,
+  brokerOrderId: string,
+  { tries = 8, intervalMs = 750 } = {},
+): Promise<{ status: string; filled_avg_price: string | null } | null> {
+  let last: { status: string; filled_avg_price: string | null } | null = null;
+  for (let i = 0; i < tries; i++) {
+    last = await alpaca.getOrder(brokerOrderId);
+    if (TERMINAL_SET.has(last.status)) return last;
+    if (i < tries - 1) await sleep(intervalMs);
+  }
+  return last;
+}
+
+/**
+ * Heal orders left in a non-terminal status by prior runs. Without this, rows
+ * are frozen at their submit-time status (accepted/pending_new) forever even
+ * though Alpaca filled them seconds later — which reads on the dashboard as
+ * "stuck in pending, never filled." Bounded to the 100 most-recent open rows
+ * so a large backlog (or orders too old for Alpaca to return) can't stall a run.
+ */
+async function reconcileOpenOrders(
+  db: ReturnType<typeof getDb>,
+  alpaca: AlpacaCryptoClient,
+): Promise<number> {
+  const open = await db
+    .select({
+      clientOrderId: orders.clientOrderId,
+      brokerOrderId: orders.brokerOrderId,
+      status: orders.status,
+    })
+    .from(orders)
+    .where(and(isNotNull(orders.brokerOrderId), notInArray(orders.status, [...TERMINAL_ORDER_STATUSES])))
+    .orderBy(desc(orders.createdAt))
+    .limit(100);
+
+  let healed = 0;
+  for (const o of open) {
+    if (!o.brokerOrderId) continue;
+    try {
+      const latest = await alpaca.getOrder(o.brokerOrderId);
+      if (latest.status !== o.status) {
+        await db
+          .update(orders)
+          .set({ status: latest.status, filledAvgPrice: latest.filled_avg_price ?? null })
+          .where(eq(orders.clientOrderId, o.clientOrderId));
+        healed++;
+      }
+    } catch (err) {
+      // Order may be too old for Alpaca to return (404) or a transient API
+      // error — non-fatal, leave the row as-is and move on.
+      console.warn(`[dailyRun] reconcile skip ${o.clientOrderId}:`, err instanceof Error ? err.message : err);
+    }
+  }
+  return healed;
+}
+
 export async function runOnce(): Promise<RunResult> {
   const cfg = loadConfig();
   const db = getDb();
   const runId = randomUUID();
   const mode: 'paper' | 'live' = cfg.LIVE_TRADING ? 'live' : 'paper';
   const alpaca = new AlpacaCryptoClient({ mode });
+
+  // 0. Heal any orders left non-terminal by prior runs so the dashboard
+  //    reflects real fills (see reconcileOpenOrders). Best-effort; never fatal.
+  try {
+    const healed = await reconcileOpenOrders(db, alpaca);
+    if (healed > 0) console.log(`[dailyRun] reconciled ${healed} prior order(s) to terminal status`);
+  } catch (err) {
+    console.warn('[dailyRun] order reconcile pass failed (continuing):', err);
+  }
 
   // 1. Load watchlist
   const wl = await db
@@ -142,6 +233,14 @@ export async function runOnce(): Promise<RunResult> {
         qty: intent.qty,
         client_order_id: clientOrderId,
       });
+      // The submit response is pre-fill; poll briefly for the terminal state so
+      // status + fill price land in the DB instead of a frozen 'pending_new'.
+      const final = await waitForTerminal(alpaca, order.id).catch((err) => {
+        console.warn(`[dailyRun] fill poll failed for ${clientOrderId} (recording submit status):`, err);
+        return null;
+      });
+      const finalStatus = final?.status ?? order.status;
+      const finalFillPrice = final?.filled_avg_price ?? order.filled_avg_price ?? null;
       await db.insert(orders).values({
         runId,
         brokerOrderId: order.id,
@@ -150,11 +249,11 @@ export async function runOnce(): Promise<RunResult> {
         side: intent.side,
         notional: intent.notional != null ? String(intent.notional) : null,
         qty: intent.qty != null ? String(intent.qty) : null,
-        filledAvgPrice: order.filled_avg_price ?? null,
-        status: order.status,
+        filledAvgPrice: finalFillPrice,
+        status: finalStatus,
         reason: intent.reason,
       });
-      submitted.push({ intent, status: order.status, brokerOrderId: order.id });
+      submitted.push({ intent, status: finalStatus, brokerOrderId: order.id });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       await db.insert(orders).values({

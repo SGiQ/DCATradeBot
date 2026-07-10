@@ -180,6 +180,11 @@ export class AlpacaCryptoClient {
     }
   }
 
+  /** Fetch a single order's current state by broker order id. */
+  async getOrder(id: string): Promise<OrderResponse> {
+    return this.req(this.tradingBase, `/v2/orders/${encodeURIComponent(id)}`);
+  }
+
   async submitOrder(req: OrderRequest): Promise<OrderResponse> {
     const body: Record<string, unknown> = {
       symbol: req.symbol,
