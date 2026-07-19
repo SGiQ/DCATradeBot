@@ -97,9 +97,21 @@ async function reconcileOpenOrders(
         healed++;
       }
     } catch (err) {
-      // Order may be too old for Alpaca to return (404) or a transient API
-      // error — non-fatal, leave the row as-is and move on.
-      console.warn(`[dailyRun] reconcile skip ${o.clientOrderId}:`, err instanceof Error ? err.message : err);
+      const msg = err instanceof Error ? err.message : String(err);
+      // A 404 means Alpaca will never return this order again (too old, or
+      // the paper account was reset) — it can never reach a terminal status
+      // on its own, so retrying every run leaves it "stuck in pending"
+      // forever. Expire it. Other errors are transient: leave and retry.
+      if (/-> 404\b/.test(msg)) {
+        await db
+          .update(orders)
+          .set({ status: 'expired' })
+          .where(eq(orders.clientOrderId, o.clientOrderId));
+        healed++;
+        console.warn(`[dailyRun] reconcile expired ${o.clientOrderId} (broker 404)`);
+      } else {
+        console.warn(`[dailyRun] reconcile skip ${o.clientOrderId}:`, msg);
+      }
     }
   }
   return healed;
@@ -270,10 +282,19 @@ export async function runOnce(): Promise<RunResult> {
     }
   }
 
-  // 7. Refresh local positions table from broker (best-effort)
+  // 7. Refresh local positions table from broker (best-effort). The broker
+  //    account can hold assets this bot doesn't manage (e.g. stock positions
+  //    in the same paper account), and the crypto pair formatter below
+  //    mangles their tickers (AMD → "/AMD"). Mirror only watchlist symbols,
+  //    and drop any local rows that were never on the watchlist.
+  const allWatch = await db.select({ symbol: watchlist.symbol }).from(watchlist);
+  const managed = new Set(allWatch.map((w) => w.symbol));
   const fresh = await alpaca.listPositions();
+  let mirrored = 0;
   for (const p of fresh) {
     const canonical = p.symbol.includes('/') ? p.symbol : `${p.symbol.slice(0, -3)}/${p.symbol.slice(-3)}`;
+    if (!managed.has(canonical)) continue;
+    mirrored++;
     await db
       .insert(positions)
       .values({ symbol: canonical, qty: String(p.qty), avgCost: String(p.avg_entry_price) })
@@ -281,6 +302,9 @@ export async function runOnce(): Promise<RunResult> {
         target: positions.symbol,
         set: { qty: String(p.qty), avgCost: String(p.avg_entry_price), updatedAt: new Date() },
       });
+  }
+  if (managed.size > 0) {
+    await db.delete(positions).where(notInArray(positions.symbol, [...managed]));
   }
 
   // 8. Push fresh snapshot to NIA (fire-and-forget; no-op if vars unset)
@@ -295,7 +319,7 @@ export async function runOnce(): Promise<RunResult> {
       portfolio: Number.isFinite(portfolio) ? portfolio : undefined,
       cash: Number.isFinite(cash) ? cash : undefined,
       buying_power: account.buying_power != null ? Number(account.buying_power) : undefined,
-      open_trades: fresh.length,
+      open_trades: mirrored,
       today_pnl: todayPnl != null && Number.isFinite(todayPnl) ? todayPnl : undefined,
       last_run_at: new Date().toISOString(),
       mode,

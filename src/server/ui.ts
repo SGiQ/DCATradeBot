@@ -8,6 +8,7 @@ import { loadConfig } from '../config.js';
 import { getDb } from '../db/client.js';
 import { approvals, orders, positions, runLogs, watchlist } from '../db/schema.js';
 import { verifyApprovalSig } from '../safety/liveGate.js';
+import { computeBaseline } from './baseline.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -129,6 +130,7 @@ export function startUi(): void {
       if (req.method === 'GET' && path === '/api/orders') return send(res, 200, await handleApiOrders());
       if (req.method === 'GET' && path === '/api/positions') return send(res, 200, await handleApiPositions());
       if (req.method === 'GET' && path === '/api/watchlist') return send(res, 200, await handleApiWatchlist());
+      if (req.method === 'GET' && path === '/api/baseline') return send(res, 200, await computeBaseline());
       if (req.method === 'GET' && path === '/api/approvals') return send(res, 200, await handleApiApprovals());
 
       if (req.method === 'POST' && path.startsWith('/api/approvals/')) {
